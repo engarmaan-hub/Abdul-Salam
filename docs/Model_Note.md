@@ -279,23 +279,44 @@ Section 9.5 shows what each combination gives.
 
 ---
 
-## 6. Load steps and the reference state
+## 6. The three mechanical stages and the reference state
 
-| LS | Time (h) | Applied | Purpose |
-|---|---|---|---|
-| 1 | 0.5 | gravity on the **natural ground only** (fill, concrete and crushed rock made weightless with `MP,DENS` ≈ 0); soil at a frozen reference temperature | **geostatic stress**, the reference for settlement |
-| 2 | 0.75 | full densities, pavement + traffic surcharge (temperatures unchanged) | construction loads |
-| 3 | 1 | initial temperature profile ICT (thawed active layer and fill take thaw strain and thawed properties) | end of construction |
-| 4 … 183 | 730·k | monthly temperature field from THERMAL.rth; creep on (`RATE,ON`) | 15 years of service |
+The mechanical run follows the construction sequence in three stages. Simulated time is **5 years** (`NYEAR = 5` in `01`).
 
-Loads (LS2) and the first temperature field (LS3) are applied in **separate steps**. Each is a large change on its own, and splitting them makes both converge more easily.
+| Stage | LS | Time (h) | What happens | Check |
+|---|---|---|---|---|
+| **1 Geostatic** | 1 | 1 | Only the natural ground and the buried footing exist; the embankment and the abutment above ground are **killed** (`EKILL`). Gravity acts on the ground, and every ground element starts with its **K0 initial stress** (`INISTATE`): σ_v = g·Σρ·h (overburden at the element centroid) and σ_h = K0·σ_v with K0 = ν/(1−ν). Soil is at the frozen reference temperature (no thaw strain). | **Displacement ≈ 0.** Printed as `GEOSTATIC CHECK` and written to `geostatic_check.txt` |
+| **2 Construction** | 2 | 2 | Embankment and abutment are **activated** (`EALIVE`) with their weight, then the pavement + traffic load goes on the road surface | construction settlement, a few cm |
+| **3 Freeze–thaw** | 3 | 3 | initial temperature field ICT (end of construction; the thawed active layer and fill take their thaw strain) | |
+| | 4 … 63 | 730·k | the monthly temperature fields of THERMAL.rth for 5 years; creep on | settlement growth |
 
-**Why measure from LS1.** The paper states that "the initial ground stress includes self-weight". Real ground has already consolidated under its own weight, so that compression is not settlement. Measuring from LS1 therefore excludes it and includes:
+**Why the geostatic stage has no settlement.** If gravity is simply switched on, the ground compresses under its own weight: 3.5 cm in the Python check. That is not a real settlement, because the natural ground consolidated long ago.
+
+With the initial stress σ₀ set to the overburden, the internal forces ∫Bᵀσ₀ already balance the weight ∫Nᵀρg, so nothing moves. The check in Section 9.8 gives **0.000 mm**, because:
+- the initial stress is constant per element and taken at its centroid (as `INISTATE` does);
+- the same bulk densities are used for σ_v and for the gravity load;
+- so the equilibrium is exact.
+
+The buried footing is treated as the ground it replaced in stage 1 (density 2080 kg/m³). Its extra concrete weight is added in stage 2.
+
+**Unit weight.** Table 2 gives *dry* density and water content. The mechanical run uses the bulk density ρ_d·(1+w) (`BULK = 1`), because the ice and water weigh too:
+
+| Soil | Bulk density (kg/m³) |
+|---|---|
+| gravel | 2070 |
+| sandy | 2090 |
+| sub-clay | 2080 |
+| mudstone | 2070 |
+| fill | 2184 |
+
+**Settlement is measured from stage 1.** It therefore includes:
 1. the compression caused by the embankment and traffic;
 2. thaw strain;
 3. creep and plastic strain.
 
-`03` also writes a "freeze-thaw only" version measured from LS3, the end of construction (`tot_ft`, `fnd_ft`).
+`03` also writes a "freeze–thaw only" version measured from LS3, the end of construction (`tot_ft`, `fnd_ft`).
+
+**Running stage by stage.** `STOP_AFTER = 1` stops after the geostatic stage, `2` after construction, and `3` after the initial temperatures (`0` = everything). Check each stage before running the next.
 
 ---
 
@@ -444,6 +465,21 @@ What this shows:
 - `tools/check_enthalpy.py`: ENTH and latent-heat check (Section 9.3).
 - `tools/settlement_check.py` prints every generated E, ν, c, φ, α, σ_Y and creep C₁ table, the creep magnitude, and 1-D thaw settlement against thaw depth. Every 1 m of sub-clay thawed is about **12 cm**; a thaw depth of 6 m under the abutment is about 49 cm of thaw strain alone.
 - `tools/traffic_load.py` gives Section 7's numbers.
+
+### 9.8 2-D finite-element check of the three stages (`tools/fe_check_2d.py`)
+
+This is a plane-strain, linear-elastic FE model in Python with **the same mesh** as the macro (about 14 200 elements), the same materials, supports and stages. It uses Q4 elements; penalty ties join the concrete to the soil and connect any non-coincident nodes.
+
+| Check | Result |
+|---|---|
+| Stiffness matrix, footing + front joined, backwall contact open | pivot ratio 4.5e-7: **supported** |
+| Stiffness matrix, all concrete/soil contact open (the failed ANSYS runs) | pivot ratio 1.9e-16: **singular = rigid-body motion** |
+| Stage 1, gravity only | 3.5 cm "settlement" (not real) |
+| **Stage 1, K0 initial stress + gravity** | **max \|u\| = 0.000 mm** |
+| Stage 2 (60.1 kPa, frozen ground), total / foundation / embankment | d = 0: 1.6 / 1.6 / 0.0 cm; d = 20 m: 3.7 / 3.1 / 0.6 cm |
+| Stage 3a (ICT, paper mode) | d = 0: 3.4 / 4.8 / −1.4 cm; d = 20 m: 19.2 / 11.1 / 8.0 cm |
+
+Stage 3a is linear elastic and before any monthly thaw. Its large embankment term is the 1 % thaw strain of the 7 m fill, which counts from the frozen reference (paper mode). With plasticity, ANSYS will give somewhat larger values.
 
 ### 9.7 Not verified without ANSYS: watch these on the first run
 
@@ -607,6 +643,33 @@ The bonded-contact fix still depends on the contact algorithm detecting the coin
 2. Set `MODE_CHECK = 0` and run the full analysis.
    - If it fails, note which `=====` marker was last printed. LS3 means the thaw step: try `BEHIND = 1`, then `USE_PLAS = 0`, to see which part is unstable.
 
+### 12.3 Third run: same error. The mesh itself was the cause, and the new staged mechanical run
+
+**Finding.** `tools/check_geometry.py` and `tools/fe_check_2d.py` rebuilt the thermal mesh and found the following:
+1. The trapezoidal abutment-body areas (3, 4) cannot be mapped-meshed with the requested divisions.
+2. Because `LESIZE` uses soft divisions, the mesher changes them, and the change travels through the concrete into the **footing bottom** (concrete 19 divisions against soil 15) and the **front face** (5 against 4).
+3. So concrete and soil nodes do **not** coincide there. `CPINTF` coupled only a few corner nodes, and the abutment was still effectively loose.
+
+This lives in the thermal mesh, which is why no change in `02` alone could cure it.
+
+**Fix in `01` (FIX 9):**
+- Areas 3 and 4 are **free-meshed**.
+- The sloped backwall lines have **hard divisions** (4/44: 24, 5/45: 4).
+- Every mapped area now has matching opposite sides, and all 12 concrete/soil interface lines have equal divisions, so the nodes coincide.
+- Simulated time is 5 years.
+
+**The thermal run must be repeated** (new mesh).
+
+**New `02`, your staged approach** (Section 6): geostatic with `EKILL` + `INISTATE`, construction with `EALIVE` + traffic, then freeze–thaw. The run ends with the `GEOSTATIC CHECK`.
+
+**How to run:**
+1. Run `01` (5 years).
+2. Run `02` with `STOP_AFTER = 1`. Search the output for `MODEL CHECK` and `GEOSTATIC CHECK`. Max |U| should be about 0 (well under 1 mm).
+3. `STOP_AFTER = 2`: construction settlement a few cm (Section 9.8).
+4. `STOP_AFTER = 0`: the full 5 years. Then run `03` and `tools/compare_fig14.py`.
+
+If a stage fails, send the `MODEL CHECK` lines, the last `=====` marker and the first error.
+
 ---
 
 ## 13. APDL commands used (glossary)
@@ -631,6 +694,10 @@ The bonded-contact fix still depends on the contact algorithm detecting the coin
 | `SET`, `*GET`, `UY()`, `TEMP()`, `NODE()` | read results in POST1 |
 | `*CFOPEN`/`*VWRITE`/`*CFCLOS` | write CSV files |
 | `LCDEF`/`LCOPER,SUB` | subtract the LS1 displacement for contour plots |
+| `EKILL` / `EALIVE`, `ESEL,S,LIVE` | kill the embankment and abutment in the geostatic stage, activate them for construction |
+| `INISTATE,SET,DTYP,STRE` / `INISTATE,DEFINE` | K0 initial stress per element (geostatic equilibrium) |
+| `CPINTF` | couple coincident concrete/soil nodes (footing, front) |
+| `NSORT,U,…` + `*GET,…,SORT` | geostatic check: largest displacement of stage 1 |
 
 ---
 

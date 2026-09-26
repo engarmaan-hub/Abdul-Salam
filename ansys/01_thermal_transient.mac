@@ -14,6 +14,12 @@
 !   FIX 6  mat 4 latent-heat peak at -0.2..0 degC restored (FIX_M4)
 !   FIX 7  crushed-rock layer OFF by default: the paper has no measure
 !   FIX 8  mechanical tables removed (built in step 2 from Table 3)
+!   FIX 9  conformal concrete/soil interfaces: the soft LESIZE divisions
+!          of the trapezoidal abutment areas (3, 4) could not be mapped,
+!          the mesher changed them, and the change spread into the footing
+!          bottom (concrete 19 vs soil 15 divisions) and the front face.
+!          Areas 3, 4 are now free-meshed and interface lines have hard
+!          divisions, so every concrete interface node has a soil twin.
 !=======================================================================
 /clear
 /FILNAME,THERMAL,1   !>>> FIX 1: fixed jobname, read by steps 2 and 3
@@ -27,7 +33,7 @@ CR_KS     = 1620     ! crushed rock k, warm season  (0.45 W/m.K)
 CR_KW     = 8100     ! equivalent k, cold season (convection), about 5x CR_KS
 EMB_MEAN  = 1.5      ! mean annual embankment-surface temperature (original 1.5)
 EMB_AMP   = 12.5     ! annual amplitude of embankment surface
-NYEAR     = 15       ! simulated years
+NYEAR     = 5        ! simulated years (paper: 15; 5 for this stage)
 QGEO      = 72       !>>> FIX 2: 0.02 W/m2 = 72 J/m2.h (paper); was 131
 XL        = -50      !>>> FIX 4: left end of model (abutment back face ~ x=-6.2)
 YB        = -30      !>>> FIX 3: model bottom, 30 m below natural ground
@@ -240,17 +246,18 @@ LSEL, , , ,P51X
 CM,_Y1,LINE
 CMSEL,,_Y
 LESIZE,_Y1,0.25, , , , , , ,1
+!>>> FIX 9: hard divisions on the sloped backwall lines (same as soil side)
+LESIZE,4,,,24,,1,,,0
+LESIZE,5,,,4,,1,,,0
 MSHAPE,0,2D
+MSHKEY,1                   ! mapped: rectangular concrete areas
+ASEL,S,,,1,2
+ASEL,A,,,5,9
+AMESH,ALL
+MSHKEY,0                   ! free: trapezoidal abutment body (areas 3, 4),
+ASEL,S,,,3,4               ! so their divisions do not spread into the
+AMESH,ALL                  ! footing bottom / front face
 MSHKEY,1
-FLST,5,9,5,ORDE,2
-FITEM,5,1
-FITEM,5,-9
-CM,_Y,AREA
-ASEL, , , ,P51X
-CM,_Y1,AREA
-CHKMSH,'AREA'
-CMSEL,S,_Y
-AMESH,_Y1
 CMDELE,_Y
 CMDELE,_Y1
 CMDELE,_Y2
@@ -443,6 +450,9 @@ LSEL, , , ,P51X
 CM,_Y1,LINE
 CMSEL,,_Y
 LESIZE,_Y1,0.5, , , , , , ,1
+!>>> FIX 9: soil backwall lines get the same hard divisions as concrete
+LESIZE,44,,,24,,1,,,0
+LESIZE,45,,,4,,1,,,0
 FLST,5,16,5,ORDE,2
 FITEM,5,10
 FITEM,5,-25

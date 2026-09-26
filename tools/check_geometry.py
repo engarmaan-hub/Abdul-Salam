@@ -33,7 +33,11 @@ def evaluate(expr, par):
 
 
 def parse(path):
+    """Returns par, kp, lines, areas, lesize.  Also sets parse.ndiv (lines
+    with an explicit, hard number of divisions) and parse.free (areas meshed
+    with MSHKEY,0)."""
     par, kp, lines, areas, lesize = {}, {}, {}, [], {}
+    ndiv, free, mshkey, asel = {}, set(), 1, []
     src = [strip(l) for l in open(path)]
     flst, i = [], 0
 
@@ -86,6 +90,15 @@ def parse(path):
             flst.append(int(f[2]))
         elif cmd == "AL":
             areas.append(list(flst))
+        elif cmd == "MSHKEY":
+            mshkey = int(f[1])
+        elif cmd == "ASEL" and len(f) > 5 and f[1].upper() in ("S", "A", "") and f[4].isdigit():
+            rng = list(range(int(f[4]), int(f[5]) + 1)) if len(f) > 5 and f[5] else [int(f[4])]
+            asel = rng if f[1].upper() == "S" else asel + rng
+        elif cmd == "AMESH" and len(f) > 1 and f[1].upper() == "ALL" and mshkey == 0:
+            free |= set(asel)
+        elif cmd == "LESIZE" and f[1].isdigit():
+            ndiv[int(f[1])] = int(f[4])                 # LESIZE,line,,,NDIV,...
         elif cmd == "LESIZE":
             size = float(f[2])
             items = []
@@ -97,6 +110,7 @@ def parse(path):
             for n in items:
                 lesize.setdefault(n, size)
         i += 1
+    parse.ndiv, parse.free = ndiv, free
     return par, kp, lines, areas, lesize
 
 
@@ -179,27 +193,37 @@ def main():
 
     for rule, fn in (("ceil", math.ceil), ("nint", lambda v: max(1, round(v)))):
         div = {n: fn(length(n) / s - 1e-9) for n, s in lesize.items()}
+        div.update(parse.ndiv)
+        mapped = [ls for a, ls in enumerate(areas, 1) if a not in parse.free]
         changed = True
         while changed:
             changed = False
-            for ls in areas:
+            for ls in mapped:
                 for p, q in pairs(ls):
                     if p in div and q not in div:
                         div[q] = div[p]; changed = True
                     elif q in div and p not in div:
                         div[p] = div[q]; changed = True
         bad = [(a, p, div.get(p), q, div.get(q)) for a, ls in enumerate(areas, 1)
-               for p, q in pairs(ls) if div.get(p) != div.get(q)]
+               if a not in parse.free for p, q in pairs(ls) if div.get(p) != div.get(q)]
         missing = sorted(n for n in lines if n not in div)
         nel = sum(div[pairs(ls)[0][0]] * div[pairs(ls)[1][0]] for ls in areas
                   if pairs(ls)[0][0] in div and pairs(ls)[1][0] in div)
         print(f"  LESIZE rounding = {rule}: "
               f"{'all opposite sides match' if not bad else 'MISMATCH (area, line, div, line, div): ' + str(bad)}"
               f"; no size: {missing or 'none'}; ~{nel} elements, ~{nel + len(areas) * 40} nodes")
-    print("  note: LESIZE here uses KYNDIV = 1 (soft divisions), so ANSYS may adjust a")
-    print("  mismatched pair to mesh it mapped. The same pairs mismatch in the original")
-    print("  -20 m x -20 m model, which meshed; compare runs with XL/YB changed to see")
-    print("  that the extension adds no new mismatch.")
+    print(f"  free-meshed areas: {sorted(parse.free) or 'none'}; hard divisions: {parse.ndiv or 'none'}")
+    # interface conformity: concrete line vs soil line, divisions must match
+    iface = ((8, 48), (25, 49), (26, 50), (24, 51), (13, 54), (22, 52), (23, 53),
+             (3, 43), (4, 44), (5, 45), (6, 46), (7, 47))
+    div = {n: math.ceil(length(n) / s - 1e-9) for n, s in lesize.items()}
+    div.update(parse.ndiv)
+    bad_if = [(c, div.get(c), q, div.get(q)) for c, q in iface if div.get(c) != div.get(q)]
+    print("  concrete/soil interface divisions: " + ("all match (nodes coincide)" if not bad_if
+          else "MISMATCH (concrete line, div, soil line, div): " + str(bad_if)))
+    print("  (soft LESIZE divisions, KYNDIV = 1, are only changed by the mesher when")
+    print("   opposite sides of a mapped area disagree; with none left, the mesh")
+    print("   ANSYS builds is the one checked here)")
 
 if __name__ == "__main__":
     main()

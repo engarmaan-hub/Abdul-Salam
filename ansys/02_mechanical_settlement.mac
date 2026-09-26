@@ -1,32 +1,32 @@
 !=======================================================================
 ! 02_mechanical_settlement.mac
 !
-! Sequential thermo-mechanical analysis - STEP 2 (structural)
-! Freeze-thaw settlement of the embankment / bridge-abutment transition
-! following Chen et al., Eng. Fail. Anal. 163 (2024) 108476:
+! Sequential thermo-mechanical analysis - STEP 2 (structural), in three
+! stages:
+!   STAGE 1  GEOSTATIC   natural ground (+ buried footing) under its own
+!            weight, with the matching K0 initial stresses (INISTATE), so
+!            the ground is in equilibrium and does NOT settle. Embankment
+!            and abutment above ground do not exist yet (EKILL).
+!   STAGE 2  CONSTRUCTION  embankment and abutment are activated (EALIVE)
+!            with their weight, then the pavement + traffic load.
+!   STAGE 3  FREEZE-THAW  initial temperature field (end of construction),
+!            then the monthly temperature fields of the thermal run for
+!            NYEAR years (5): thaw strain, softening and creep.
+!
+! Constitutive model (Chen et al., Eng. Fail. Anal. 163 (2024) 108476):
 !   Eq.4  eps_k = alpha (thawed), 0 (frozen)   thaw settlement strain
 !   Eq.5  eps_c = A s^B t^C e^(-D/T)           creep of frozen soil
-!   Eq.6  E     = a1 + b1|T|^m
-!   Eq.7  nu    = a2 + b2|T|
-!   Eq.8  c     = a3 + b3|T|
-!   Eq.9  phi   = a4 + b4|T|                   (Table 3 constants)
+!   Eq.6-9  E, nu, c, phi = a + b|T|(^m)        Table 3
 !
 ! Needs from STEP 1 (01_thermal_transient.mac, jobname THERMAL):
-!   THERMAL.db   same mesh, materials, contact pairs, XL, YB, ICT
+!   THERMAL.db   same mesh, materials, contact pairs, NYEAR
 !   THERMAL.rth  nodal temperatures at the end of every month
-! Results are extracted with 03_extract_results.mac.
+! Results: 03_extract_results.mac. The geostatic check is printed at the
+! end of this run and written to geostatic_check.txt.
 !
-! Units: m, kg, N, Pa. Time in HOURS, the same clock as the thermal run
-! (t = 0 mid-October; October of year N = N*8760 h).
-!
-! Load steps
-!   LS1  t=0.5  ground self weight only (geostatic stress). Embankment,
-!               abutment and crushed rock are weightless. REFERENCE STATE:
-!               settlement is measured from here, as in Fig. 14.
-!   LS2  t=0.75 embankment + abutment weight, pavement + traffic load
-!               (temperatures unchanged from LS1)
-!   LS3  t=1    initial temperature field ICT (end of construction)
-!   LS4+ t=730k monthly temperature fields from THERMAL.rth
+! Units: m, kg, N, Pa. Time in HOURS (same clock as the thermal run).
+! Load steps:  LS1 geostatic (t=1) | LS2 construction (t=2) |
+!              LS3 initial temperatures (t=3) | LS4.. months (t=730*k)
 !=======================================================================
 /CLEAR
 /FILNAME,MECH,1
@@ -38,11 +38,10 @@ PI=3.14159265358979
 *GET,PTY,PARM,NYEAR,TYPE
 *IF,PTY,EQ,-1,THEN
   *MSG,WARN
-  NYEAR was not found in THERMAL.db - using 15 years
-  NYEAR = 15
+  NYEAR was not found in THERMAL.db - using 5 years
+  NYEAR = 5
 *ENDIF
-! initial temperature profile: same table as the thermal IC (redefined here
-! so the mechanical run does not depend on it being stored in the database)
+! initial temperature profile: same table as the thermal IC
 *DEL,ICT
 *DIM,ICT,TABLE,27,1
 *TAXIS,ICT(1),1,-30,-16,-15,-14,-13,-12,-11,-10,-9,-8
@@ -54,20 +53,19 @@ ICT(21,1)=1.0,1.0,2.0,2.0,3.0,3.0,3.0
 
 !---------------------------- switches ---------------------------------
 NMON      = NYEAR*12
-MSTEP     = 1        ! solve every MSTEP months (1 = monthly, 2, 3, 6, 12)
+STOP_AFTER= 0        ! 0 = run everything; 1 = stop after the geostatic
+                     ! stage; 2 = after construction; 3 = after the
+                     ! initial temperatures. Use 1, then 2, ... to check
+                     ! the analysis stage by stage.
+MSTEP     = 1        ! solve every MSTEP months (1 = monthly, 2, 3, 6)
 THAW_REF  = 0        ! 0 = PAPER: thaw strain measured from the frozen state
-                     !     for every soil (Eq.4 as written: eps = alpha
-                     !     whenever T > 0, including the active layer and the
-                     !     fill that is thawed at t = 0)
-                     ! 1 = soil that is thawed at t = 0 starts strain-free
+                     ! 1 = soil thawed at t = 0 starts strain-free
 IRREV     = 0        ! 0 = PAPER: strain follows the current temperature
-                     ! 1 = thaw strain never recovers (no frost heave);
-                     !     soil props then use the highest T reached
+                     ! 1 = thaw strain never recovers (no frost heave)
 THS_1     = 0.0      ! thaw strain starts   (degC)  alpha = 0 below 0 degC
 THS_2     = 0.1      ! thaw strain complete (degC)  short ramp, convergence
 VERT_ONLY = 1        ! 1 = thaw strain vertical only (1-D thaw consolidation)
-FILL_THAW = 1        ! 1 = PAPER: fill gets alpha = 1 % (Table 3, cobbly soil)
-                     ! 0 = fill placed unfrozen has no ice -> no thaw strain
+FILL_THAW = 1        ! 1 = PAPER: fill gets alpha = 1 %; 0 = no thaw strain
 USE_CREEP = 1        ! 1 = frozen-soil creep, Eq.5
 SIG_U     = 1000     ! Pa per stress unit of the creep law (1000 = kPa)
 TIM_U     = 1        ! hours per time unit of the creep law (1 = h)
@@ -75,50 +73,41 @@ T_CLMP    = 0.1      ! |T| floor in exp(-D/T), avoids blow-up at 0 degC
 M_E       = 1.0      ! exponent m in Eq.6 - NOT given in the paper
 C_MIN     = 5e3      ! minimum cohesion (Pa) so cohesionless soil converges
 PHI_MX    = 50       ! cap on Eq.9 friction angle (deg)
+BULK      = 1        ! 1 = unit weight from bulk density rho_d*(1+w)
+                     !     (Table 2 gives DRY density and water content)
+                     ! 0 = dry density as in the thermal run
 !---- surcharge on the road surface (see docs/Model_Note.md, Sec. 7)
-LOAD_CASE = 1        ! 1 = PAPER: 60.1 kPa "dynamic load as static load"
-                     ! 2 = realistic long-term: pavement dead load + traffic
-                     !     equivalent soil column (JTG D30 / D60, 550 kN)
-                     ! 3 = user values below
-Q_PAVE    = 0        ! pavement layers dead load (Pa)       (case 3)
-Q_VEH     = 0        ! vehicle equivalent uniform load (Pa)  (case 3)
+LOAD_CASE = 1        ! 1 = PAPER 60.1 kPa; 2 = pavement 16.4 + traffic
+                     !     17.9 kPa (JTG); 3 = user values below
+Q_PAVE    = 0
+Q_VEH     = 0
 *IF,LOAD_CASE,EQ,1,THEN
   Q_PAVE = 0
   Q_VEH  = 60.1e3
 *ELSEIF,LOAD_CASE,EQ,2
-  Q_PAVE = 16.4e3    ! 0.18 m AC + 0.36 m CTB + 0.20 m subbase
-  Q_VEH  = 17.9e3    ! 550 kN / (2.4 m x 12.8 m), one lane loaded
+  Q_PAVE = 16.4e3
+  Q_VEH  = 17.9e3
 *ENDIF
 Q_TRAF    = Q_PAVE+Q_VEH
 LOAD_CAP  = 1        ! 1 = also on the road over the abutment cap (line 2)
 CR_E      = 100e6    ! crushed-rock layer (mat 11) modulus, if USE_CR = 1
-!---- support of the abutment (fix for the rigid-body error)
-!     The concrete (abutment + footing) has its OWN nodes and is joined to
-!     the soil only through the interfaces below.
-ABUT_BOND = 2        ! footing + front interfaces:
-                     ! 2 = COUPLED node to node (CPINTF) - exact, needs no
-                     !     contact detection, cannot float (default)
-                     ! 1 = bonded contact (KEYOPT(12)=5)
-                     ! 0 = standard frictional contact (can float!)
-BEHIND    = 0        ! embankment / backwall interface:
-                     ! 0 = standard contact, gap allowed (paper)
-                     ! 1 = no separation, sliding allowed (KEYOPT(12)=4)
-                     ! 2 = coupled (no sliding, no gap)
-FKN_M     = 1.0      ! contact normal stiffness factor in the structural run
-                     ! (the thermal database has 0.01 = 100x too soft)
-SEAT_FIX  = 0        ! 1 = UX = 0 at the bridge seat (superstructure restrains
-                     !     the abutment horizontally, fixed bearing)
-USE_PLAS  = 1        ! 1 = Drucker-Prager plasticity (Eqs. 8-9), 0 = elastic
-STAB      = 1        ! 1 = energy stabilisation (1e-4) from LS3 on, where the
-                     !     soil thaws and softens
-MODE_CHECK= 0        ! 1 = QUICK MODEL CHECK: elastic, no creep, all
-                     !     interfaces coupled, only LS1-LS3 (a few minutes).
-                     !     If this converges, the model is properly supported.
+!---- joining the concrete (own nodes) to the soil
+ABUT_BOND = 2        ! footing + front: 2 = coupled node to node (CPINTF),
+                     ! 1 = bonded contact, 0 = standard contact (floats!)
+BEHIND    = 0        ! backwall: 0 = standard contact, gap allowed (paper)
+                     ! 1 = no separation, 2 = coupled
+FKN_M     = 1.0      ! contact stiffness factor (thermal db has 0.01)
+SEAT_FIX  = 0        ! 1 = UX = 0 at the bridge seat from stage 2 on
+USE_PLAS  = 1        ! 1 = Drucker-Prager (Eqs. 8-9), 0 = elastic
+STAB      = 1        ! 1 = energy stabilisation (1e-4) from stage 3 on
+MODE_CHECK= 0        ! 1 = elastic, no creep, all interfaces coupled,
+                     !     stages 1-2 + initial temperatures only
 *IF,MODE_CHECK,EQ,1,THEN
   USE_PLAS  = 0
   USE_CREEP = 0
   ABUT_BOND = 2
   BEHIND    = 2
+  STOP_AFTER= 3
 *ENDIF
 
 !------------------ Table 3 constants, one column per material ----------
@@ -139,6 +128,20 @@ MPT(8,4) = 11.0, 1, 2.86e-7, 1.07, 0.06, 0.52, 0
 MPT(1,5) = 61, 53, 0.35,-0.007, 0.03, 0.094, 23     ! mat 5 embankment fill
 MPT(8,5) = 9.5, 1, 3.68e-7, 1.18, 0.08, 0.54, 1     !       = cobbly soil
 
+! Table 2: dry density (kg/m3) and water content, mats 1..5
+*DEL,RHOD
+*DEL,WCON
+*DEL,RHOM
+*DIM,RHOD,ARRAY,5
+*DIM,WCON,ARRAY,5
+*DIM,RHOM,ARRAY,5
+RHOD(1) = 1800, 1900, 1600, 1800, 2060
+WCON(1) = 0.15, 0.10, 0.30, 0.15, 0.06
+*DO,MI,1,5
+  RHOM(MI) = RHOD(MI)*(1+BULK*WCON(MI))
+*ENDDO
+RHO_G = 2080         ! footing concrete in stage 1 = surrounding ground
+
 ! temperature points for E, nu, c, phi and creep
 *DEL,TPT
 *DIM,TPT,ARRAY,18
@@ -146,6 +149,13 @@ TPT(1)  = -20,-15,-10,-7.5,-5,-4,-3,-2,-1.5
 TPT(10) = -1,-0.75,-0.5,-0.3,-0.2,-0.1,0,1,40
 NT = 18
 T_FRZ = -1.0         ! a frozen temperature: thaw strain = 0 here
+! K0 = nu/(1-nu) of each layer at T_FRZ (geostatic horizontal stress)
+*DEL,K0M
+*DIM,K0M,ARRAY,5
+*DO,MI,1,5
+  NUF = MPT(3,MI)+MPT(4,MI)*ABS(T_FRZ)
+  K0M(MI) = NUF/(1-NUF)
+*ENDDO
 
 !======================= element and material change ====================
 /PREP7
@@ -153,7 +163,7 @@ DDELE,ALL,TEMP             ! thermal boundary conditions out
 SFDELE,ALL,HFLUX
 ICDELE
 
-ETCHG,TTS                  ! PLANE55 -> PLANE182
+ETCHG,TTS                  ! PLANE55 -> PLANE182 (contact types are set below)
 KEYOPT,1,1,0               ! full integration, B-bar
 KEYOPT,1,3,2               ! PLANE STRAIN (ETCHG leaves plane stress)
 KEYOPT,2,1,0               ! CONTA172: UX, UY instead of TEMP
@@ -164,21 +174,17 @@ KEYOPT,2,10,2              ! update contact stiffness every iteration
 *ELSE
   KEYOPT,2,12,0            ! standard: embankment may separate (paper)
 *ENDIF
-! Friction MU (mat 8/9/10) and cohesion (real sets 8/9/10) come over from
-! the thermal database. The thermal run used FKN = 0.01 (only TCC matters
-! there); structurally that lets the abutment sink ~0.2 m into the soil
-! by penetration alone, so the normal stiffness factor is reset here.
-RMODIF,8,3,FKN_M
+RMODIF,8,3,FKN_M           ! the thermal run used FKN = 0.01 (100x too soft)
 RMODIF,9,3,FKN_M
 RMODIF,10,3,FKN_M
 
-!---- abutment support. Coincident concrete/soil surfaces start "just
-!     touching", which standard contact treats as OPEN (no stiffness):
-!     the concrete then floats (pivot warnings) and falls (UY > 1e6).
-!     Concrete lines / soil lines of each interface:
+!---- join the concrete (abutment + footing, own nodes) to the soil.
+!     Interfaces (concrete lines / soil lines):
 !       footing  8, 24, 25, 26  /  48, 49, 50, 51   (real set 10)
 !       front   13, 22, 23      /  52, 53, 54       (real set 9)
 !       behind   3 ... 7        /  43 ... 47        (real set 8)
+!     01 (FIX 9) meshes these conformally, so every concrete node has a
+!     coincident soil node and CPINTF couples all of them.
 NCPL = 0
 *IF,ABUT_BOND,EQ,2,THEN
   NCPL = 1
@@ -199,11 +205,10 @@ NCPL = 0
     LSEL,A,,,43,47
   *ENDIF
   NSLL,S,1
-  CPINTF,UX,1e-4           ! couple coincident concrete/soil node pairs
+  CPINTF,UX,1e-4
   CPINTF,UY,1e-4
   ALLSEL,ALL
-  ! the contact / target elements of coupled interfaces are not needed
-  ESEL,NONE
+  ESEL,NONE                ! contact elements of coupled interfaces go
   *IF,ABUT_BOND,EQ,2,THEN
     ESEL,A,REAL,,9,10
   *ENDIF
@@ -220,7 +225,7 @@ NCPL = 0
 *IF,ABUT_BOND,EQ,1,THEN
   ET,4,CONTA172
   KEYOPT,4,1,0
-  KEYOPT,4,2,0             ! augmented Lagrange (penalty)
+  KEYOPT,4,2,0
   KEYOPT,4,9,1
   KEYOPT,4,10,2
   KEYOPT,4,12,5            ! bonded (always)
@@ -355,10 +360,15 @@ MP,REFT,7,2.0
 ! crushed-rock cooling layer (mat 11), elastic, no thaw strain
 MP,EX,11,CR_E
 MP,PRXY,11,0.30
+! mechanical unit weights (bulk density, BULK = 1)
+*DO,MI,1,5
+  MP,DENS,MI,RHOM(MI)
+*ENDDO
+MP,DENS,7,2500
 
-!======================= boundary conditions ============================
+!======================= supports ======================================
 ! paper: sides fixed horizontally, bottom fixed vertically, surfaces free.
-! Extents are taken from the mesh itself (not from XL / YB parameters).
+! Extents are taken from the mesh itself.
 ALLSEL,ALL
 *GET,XMIN_M,NODE,0,MNLOC,X
 *GET,XMAX_M,NODE,0,MXLOC,X
@@ -372,9 +382,8 @@ D,ALL,UX,0
 NSEL,S,LOC,Y,YMIN_M
 *GET,N_BOT,NODE,0,COUNT
 D,ALL,UY,0
-! nodes that belong to no solid element have no stiffness at all
 ALLSEL,ALL
-ESEL,S,TYPE,,1
+ESEL,S,TYPE,,1             ! nodes in no solid element: no stiffness
 NSLE,S
 NSEL,INVE
 *GET,N_ORPH,NODE,0,COUNT
@@ -383,19 +392,23 @@ NSEL,INVE
   D,ALL,UY,0
 *ENDIF
 ALLSEL,ALL
-*IF,SEAT_FIX,EQ,1,THEN     ! bridge seat, y = 6, x = -1.5 ... 0
-  ESEL,S,MAT,,7
-  NSLE,S
-  NSEL,R,LOC,Y,6
-  NSEL,R,LOC,X,-1.5,0
-  D,ALL,UX,0
-  ALLSEL,ALL
-*ENDIF
 ACEL,0,9.81,0              ! gravity (acts in -y)
 TREF,0
 
-!---- MODEL CHECK printed to the output (search for "MODEL CHECK")
+!---- stage components
+ESEL,S,TYPE,,1
+ESEL,R,CENT,Y,0,100
+CM,E_ABOVE,ELEM            ! embankment, abutment above ground (+ rock)
+*GET,N_ABOVE,ELEM,0,COUNT
+ESEL,S,TYPE,,2,4
+ESEL,R,CENT,Y,0,100
+*GET,N_CABOVE,ELEM,0,COUNT
+*IF,N_CABOVE,GT,0,THEN
+  CM,C_ABOVE,ELEM          ! their contact / target elements
+*ENDIF
 ALLSEL,ALL
+
+!---- MODEL CHECK printed to the output (search for "MODEL CHECK")
 *GET,N_NODE,NODE,0,COUNT
 ESEL,S,TYPE,,1
 *GET,N_SOLID,ELEM,0,COUNT
@@ -411,18 +424,17 @@ N_CONT = N_CON2+N_CON4
 MODEL CHECK: x from %G to %G, bottom y = %G
 *MSG,NOTE,N_LEFT,N_RIGHT,N_BOT
 MODEL CHECK: fixed nodes left %I, right %I, bottom %I
-*MSG,NOTE,N_NODE,N_SOLID,N_ORPH
-MODEL CHECK: %I nodes, %I solid elements, %I free nodes
+*MSG,NOTE,N_NODE,N_SOLID,N_ORPH,N_ABOVE
+MODEL CHECK: %I nodes, %I solids, %I free nodes, %I solids above ground
 *MSG,NOTE,N_CON2,N_CON4,N_TAR
 MODEL CHECK: contact elements %I standard, %I bonded, %I target
-CPLIST                     ! lists the coupled node pairs (footing, front)
 FINISH
 
 !=========================== solution ===================================
 /SOLU
 ANTYPE,STATIC
 NLGEOM,OFF
-NROPT,UNSYM                ! friction 0.3-0.6
+NROPT,UNSYM                ! friction; also needed for birth and death
 AUTOTS,ON
 LNSRCH,ON
 NEQIT,50
@@ -431,7 +443,7 @@ KBC,0
 OUTRES,ERASE
 OUTRES,ALL,LAST
 *IF,N_CONT,GT,0,THEN
-  CNCHECK,SUMMARY          ! initial status of every contact pair
+  CNCHECK,SUMMARY
 *ENDIF
 
 ALLSEL,ALL
@@ -443,15 +455,35 @@ ALLSEL,ALL
 ESEL,S,MAT,,1,5
 ESEL,A,MAT,,11
 NSLE,S
-*VGET,SOILN(1),NODE,1,NSEL           ! 1 = soil node, concrete nodes -1/0
+*VGET,SOILN(1),NODE,1,NSEL           ! 1 = soil node
 ALLSEL,ALL
 
-!---- LS1: geostatic. Only the natural ground has weight. Soil sits at a
-!     frozen temperature (thaw strain 0), concrete at its initial field.
+!************************************************************************
+!  STAGE 1 - GEOSTATIC: ground in equilibrium, no settlement
+!************************************************************************
 RATE,OFF
-MP,DENS,5,1e-3
-MP,DENS,7,1e-3
-MP,DENS,11,1e-3
+! embankment and abutment above ground do not exist yet
+CMSEL,S,E_ABOVE
+EKILL,ALL
+*IF,N_CABOVE,GT,0,THEN
+  CMSEL,S,C_ABOVE
+  EKILL,ALL
+*ENDIF
+ALLSEL,ALL
+! nodes of dead elements only: hold them (no stiffness while dead)
+ESEL,S,LIVE
+NSLE,S
+NSEL,INVE
+*GET,N_DEAD,NODE,0,COUNT
+*IF,N_DEAD,GT,0,THEN
+  CM,DEADNODE,NODE
+  D,ALL,UX,0
+  D,ALL,UY,0
+*ENDIF
+ALLSEL,ALL
+! footing concrete stands in for the ground it replaced
+MP,DENS,7,RHO_G
+! temperatures: soil frozen reference (no thaw strain), concrete ICT
 *DO,I,1,NMAX
   *IF,NSEL(I),EQ,1,THEN
     YY = NY(I)
@@ -464,32 +496,100 @@ MP,DENS,11,1e-3
     *ENDIF
   *ENDIF
 *ENDDO
-/COM, ===== LS1 geostatic (ground self weight) =====
-TIME,0.5
-NSUBST,5,100,2
+! K0 initial stress in every live solid element (centroid depth d):
+!   sigma_v = g * sum(rho_bulk * layer thickness above the centroid)
+!   sigma_x = sigma_z = K0 * sigma_v,  compression negative
+! With the same densities as the gravity load, this stress field is in
+! exact equilibrium: the geostatic step gives (practically) zero movement.
+INISTATE,SET,DTYP,STRE
+ESEL,S,LIVE
+ESEL,R,TYPE,,1
+*GET,EMX,ELEM,0,NUM,MAX
+*DO,IE,1,EMX
+  *IF,ESEL(IE),EQ,1,THEN
+    DD = -CENTRY(IE)
+    H1 = (DD+ABS(DD))/2                       ! max(d,0)
+    H1 = (H1+0.5-ABS(H1-0.5))/2               ! min(.,0.5)    gravel
+    H2 = DD-0.5
+    H2 = (H2+ABS(H2))/2
+    H2 = (H2+1.5-ABS(H2-1.5))/2               ! 0.5-2 m       sandy
+    H3 = DD-2
+    H3 = (H3+ABS(H3))/2
+    H3 = (H3+6-ABS(H3-6))/2                   ! 2-8 m         sub-clay
+    H4 = DD-8
+    H4 = (H4+ABS(H4))/2                       ! 8-30 m        mudstone
+    SV = 9.81*(RHOM(1)*H1+RHOM(2)*H2+RHOM(3)*H3+RHOM(4)*H4)
+    LM = 4
+    *IF,DD,LT,8,THEN
+      LM = 3
+    *ENDIF
+    *IF,DD,LT,2,THEN
+      LM = 2
+    *ENDIF
+    *IF,DD,LT,0.5,THEN
+      LM = 1
+    *ENDIF
+    KK = K0M(LM)
+    INISTATE,DEFINE,IE,,,,-KK*SV,-SV,-KK*SV,0
+  *ENDIF
+*ENDDO
+ALLSEL,ALL
+/COM, ===== STAGE 1  geostatic (ground self weight + K0 initial stress) =====
+TIME,1
+NSUBST,2,20,1
 SOLVE
 
-!---- LS2: construction loads - embankment + abutment weight, pavement
-!     and traffic. Temperatures stay as in LS1 (loads and thaw strain are
-!     applied in separate steps, which converges much more easily).
-MP,DENS,5,2060
-MP,DENS,7,2500
-MP,DENS,11,1600
+*IF,STOP_AFTER,NE,1,THEN
+!************************************************************************
+!  STAGE 2 - CONSTRUCTION: embankment + abutment, then traffic
+!************************************************************************
+*IF,N_DEAD,GT,0,THEN
+  CMSEL,S,DEADNODE
+  DDELE,ALL,UX
+  DDELE,ALL,UY
+  ALLSEL,ALL
+*ENDIF
+! supports again (DDELE above may have removed some on the left side)
+NSEL,S,LOC,X,XMIN_M
+D,ALL,UX,0
+NSEL,S,LOC,X,XMAX_M
+D,ALL,UX,0
+NSEL,S,LOC,Y,YMIN_M
+D,ALL,UY,0
+ALLSEL,ALL
+CMSEL,S,E_ABOVE
+EALIVE,ALL
+*IF,N_CABOVE,GT,0,THEN
+  CMSEL,S,C_ABOVE
+  EALIVE,ALL
+*ENDIF
+ALLSEL,ALL
+MP,DENS,7,2500             ! full concrete weight
 LSEL,S,,,55,56             ! embankment top
 *IF,LOAD_CAP,EQ,1,THEN
-  LSEL,A,,,2               ! road surface over the abutment cap
+  LSEL,A,,,2               ! road over the abutment cap
 *ENDIF
 NSLL,S,1
 SF,ALL,PRES,Q_TRAF
 ALLSEL,ALL
-/COM, ===== LS2 construction loads (fill, abutment, pavement + traffic) =====
-TIME,0.75
+*IF,SEAT_FIX,EQ,1,THEN     ! bridge seat, y = 6, x = -1.5 ... 0
+  ESEL,S,MAT,,7
+  NSLE,S
+  NSEL,R,LOC,Y,6
+  NSEL,R,LOC,X,-1.5,0
+  D,ALL,UX,0
+  ALLSEL,ALL
+*ENDIF
+/COM, ===== STAGE 2  construction (embankment + abutment + traffic) =====
+TIME,2
 NSUBST,20,400,10
 SOLVE
+*ENDIF
 
-!---- LS3: end of construction - initial temperature profile ICT
-!     (the thermal IC): thawed active layer and fill take their thaw
-!     strain and thawed properties here
+*IF,STOP_AFTER,EQ,0,OR,STOP_AFTER,GE,3,THEN
+!************************************************************************
+!  STAGE 3 - FREEZE-THAW: initial temperatures, then NYEAR years
+!************************************************************************
 *DO,I,1,NMAX
   *IF,NSEL(I),EQ,1,THEN
     YY = NY(I)
@@ -499,15 +599,14 @@ SOLVE
   *ENDIF
 *ENDDO
 *IF,STAB,EQ,1,THEN
-  STABILIZE,CONSTANT,ENERGY,1e-4   ! check SENE (stabilisation energy)
-*ENDIF                             ! stays small vs. strain energy
-/COM, ===== LS3 initial temperatures (thaw of active layer and fill) =====
-TIME,1
+  STABILIZE,CONSTANT,ENERGY,1e-4
+*ENDIF
+/COM, ===== STAGE 3a  initial temperatures (thaw of active layer and fill) =====
+TIME,3
 NSUBST,50,2000,20
 SOLVE
 
-*IF,MODE_CHECK,EQ,0,THEN
-!---- LS4...: monthly temperature fields from the thermal run
+*IF,STOP_AFTER,EQ,0,THEN
 *IF,USE_CREEP,EQ,1,THEN
   RATE,ON
   CUTCONTROL,CRPLIMIT,1.0,1
@@ -528,11 +627,36 @@ SOLVE
       *ENDIF
     *ENDDO
   *ENDIF
+  /COM, ===== STAGE 3b  month %IM% =====
   TIME,TNOW
   NSUBST,5,400,2
   SOLVE
 *ENDDO
 *ENDIF
+*ENDIF
 SAVE
+FINISH
+
+!************************************************************************
+!  GEOSTATIC CHECK (stage 1 must not move the ground)
+!************************************************************************
+/POST1
+SET,1,LAST
+ALLSEL,ALL
+NSORT,U,Y
+*GET,UYMIN1,SORT,0,MIN
+*GET,UYMAX1,SORT,0,MAX
+NSORT,U,SUM
+*GET,USUM1,SORT,0,MAX
+NUSORT
+GUY1 = UYMIN1*1000
+GUY2 = UYMAX1*1000
+GUS  = USUM1*1000
+*MSG,NOTE,GUY1,GUY2,GUS
+GEOSTATIC CHECK: UY %G to %G mm, max |U| %G mm (should be ~0)
+*CFOPEN,geostatic_check,txt
+*VWRITE,GUY1,GUY2,GUS
+('stage 1: UY min ',F9.4,' mm, UY max ',F9.4,' mm, |U| max ',F9.4,' mm')
+*CFCLOS
 FINISH
 ! next: /INPUT,'03_extract_results','mac'

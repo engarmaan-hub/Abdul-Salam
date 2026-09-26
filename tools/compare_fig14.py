@@ -66,7 +66,7 @@ def make_demo(path):
     """Fake FE output (paper values +/- a bias) to test the script."""
     with open(path, "w") as f:
         f.write("yr,mon,d,tot,fnd,emb,fnd_pct,emb_pct,tot_ft,fnd_ft\n")
-        for yr in range(1, 16):
+        for yr in range(1, 6):
             k = min(1.0, 0.55 + 0.03 * yr)
             for d in range(21):
                 t3 = [PAPER[15][q][D_PAPER.index(2 * round(d / 2))] for q in ("total", "foundation")]
@@ -85,18 +85,24 @@ def main():
         make_demo(f14)
         print("DEMO MODE - fake FE data, only for testing the script\n")
     rows = read_csv(f14)
+    years_fe = sorted({int(r["yr"]) for r in rows})
+    last = years_fe[-1]
+    YEARS = (3, last) if last != 3 else (3,)
+    print(f"FE years available: 1-{last}; compared: {YEARS} "
+          f"(paper values exist for years 3 and 15 only)\n")
 
     # ---------------- table: FE vs paper ----------------
     print("Settlement, October (cm)   FE vs paper Fig. 14")
     print(f"{'yr':>3} {'d':>4} | {'total':>13} | {'foundation':>13} | {'embankment':>13}")
-    for yr in (3, 15):
+    for yr in YEARS:
         fe = {int(r["d"]): r for r in fe_profile(rows, yr)}
         for d in (0, 4, 10, 20):
             i = D_PAPER.index(d)
-            p = PAPER[yr]
+            p = PAPER.get(yr)
             r = fe[d]
-            print(f"{yr:>3} {d:>4} | {r['tot']:5.1f} / {p['total'][i]:5.1f} | "
-                  f"{r['fnd']:5.1f} / {p['foundation'][i]:5.1f} | {r['emb']:5.1f} / {p['embankment'][i]:5.1f}")
+            ref = (lambda k: f"{p[k][i]:5.1f}") if p else (lambda k: "   - ")
+            print(f"{yr:>3} {d:>4} | {r['tot']:5.1f} / {ref('total')} | "
+                  f"{r['fnd']:5.1f} / {ref('foundation')} | {r['emb']:5.1f} / {ref('embankment')}")
 
     # ---------------- 1-D thaw check ----------------
     td = os.path.join(folder, "thaw_depth.csv")
@@ -104,7 +110,7 @@ def main():
         th = read_csv(td)
         print("\n1-D check: thaw-strain part of foundation settlement, October")
         print(f"{'yr':>3} {'d':>4} {'thaw depth m':>13} {'sum(alpha*h) cm':>16} {'FE foundation cm':>17}")
-        for yr in (3, 15):
+        for yr in YEARS:
             fe = {int(r["d"]): r for r in fe_profile(rows, yr)}
             for r in th:
                 if int(r["year"]) == yr and int(r["month"]) == 10 and int(r["d_m"]) in (0, 5, 10, 20):
@@ -129,15 +135,16 @@ def main():
     series = (("total", "tot", C_TOTAL, "Total"),
               ("foundation", "fnd", C_FOUND, "Foundation ground"),
               ("embankment", "emb", C_EMB, "Embankment body"))
-    for j, yr in enumerate((3, 15)):
+    for j, yr in enumerate(YEARS):
         a = ax[0, j]
         fe = fe_profile(rows, yr)
         d_fe = [r["d"] for r in fe]
         for key, col, color, label in series:
             a.plot(d_fe, [r[col] for r in fe], color=color, lw=2, marker="o", ms=4,
                    label=f"{label} - ANSYS")
-            a.plot(D_PAPER, PAPER[yr][key], color=color, lw=1.2, ls="--", marker="o", ms=7,
-                   mfc=SURFACE, mec=color, mew=1.5, label=f"{label} - paper")
+            if yr in PAPER:
+                a.plot(D_PAPER, PAPER[yr][key], color=color, lw=1.2, ls="--", marker="o", ms=7,
+                       mfc=SURFACE, mec=color, mew=1.5, label=f"{label} - paper")
         a.set_title(f"(a) Year {yr}, October", loc="left", color=INK)
         a.set_ylabel("Settlement (cm)")
         a.set_ylim(0, 80)
@@ -145,10 +152,12 @@ def main():
     for j, (key, col, color) in enumerate((("foundation", "fnd_pct", C_FOUND),
                                             ("embankment", "emb_pct", C_EMB))):
         a = ax[1, j]
-        for yr, ls in ((3, "--"), (15, "-")):
+        for yr, ls in zip(YEARS, ("--", "-")):
             fe = fe_profile(rows, yr)
             a.plot([r["d"] for r in fe], [r[col] for r in fe], color=color, lw=2, ls=ls,
                    label=f"Year {yr} - ANSYS")
+            if yr not in PAPER:
+                continue
             p = [100 * f / t for f, t in zip(PAPER[yr][key], PAPER[yr]["total"])]
             a.plot(D_PAPER, p, color=color, lw=0, marker="^" if yr == 3 else "o", ms=7,
                    mfc=SURFACE, mec=color, mew=1.5, label=f"Year {yr} - paper")

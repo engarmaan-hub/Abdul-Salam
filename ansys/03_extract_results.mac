@@ -8,7 +8,7 @@
 ! Output files
 !   thaw_depth.csv      year, month, d, deepest thawed ground (m below y=0)
 !   temp_profiles.csv   T(y) at d = 0, 5, 10, 20 m and natural ground,
-!                       October of year 3 and year 15   (compare Fig. 9)
+!                       October of year 3 and the last year (NYEAR)
 !   fig14_profiles.csv  yr, mon, d (m), tot, fnd, emb (cm), fnd_pct,
 !                       emb_pct (% of total), tot_ft, fnd_ft (cm, freeze-
 !                       thaw only = measured from end of construction)
@@ -95,7 +95,7 @@ ALLSEL,ALL
 (F4.0,',',F4.0,',',F6.1,',',F8.3)
 *CFCLOS
 
-!---- A2: temperature profiles (October, years 3 and 15), 0.5 m steps
+!---- A2: temperature profiles (October, year 3 and year NYEAR), 0.5 m steps
 !     -999 = no soil at that point (e.g. above ground in front)
 *DEL,DP
 *DIM,DP,ARRAY,5
@@ -106,7 +106,7 @@ NRY = NINT((7-YB)/0.5)+1
 *DO,IYR,1,2
   YRS = 3
   *IF,IYR,EQ,2,THEN
-    YRS = 15
+    YRS = NYEAR
   *ENDIF
   SET,,,,,YRS*8760
   CMSEL,S,SOILNODE
@@ -139,17 +139,17 @@ ALLSEL,ALL
 (F4.0,',',F7.2,5(',',F9.3))
 *CFCLOS
 
-!---- A3: temperature contours around 0 degC, October years 3 and 15
+!---- A3: temperature contours around 0 degC, October year 3 and year NYEAR
 /SHOW,PNG
 /CONTOUR,1,8,-2,0.5,2
 SET,,,,,3*8760
 /TITLE,Temperature (degC), October, year 3
 PLNSOL,TEMP
-SET,,,,,15*8760
-/TITLE,Temperature (degC), October, year 15
+SET,,,,,NYEAR*8760
+/TITLE,Temperature (degC), October, year %NYEAR%
 PLNSOL,TEMP
-SET,,,,,15*8760-4380
-/TITLE,Temperature (degC), April, year 15
+SET,,,,,NYEAR*8760-4380
+/TITLE,Temperature (degC), April, year %NYEAR%
 PLNSOL,TEMP
 /SHOW,CLOSE
 /CONTOUR,1,9
@@ -270,16 +270,16 @@ NLS = 3+NMON/MSTEP
 (F8.3,8(',',F9.2))
 *CFCLOS
 
-!---- B3: settlement contours (relative to LS1), October years 3 and 15
+!---- B3: settlement contours (relative to LS1), October year 3 and year NYEAR
 /SHOW,PNG
 LCDEF,1,1
 SET,,,,,3*8760
 LCOPER,SUB,1
 /TITLE,Vertical displacement since geostatic state (m), October, year 3
 PLNSOL,U,Y
-SET,,,,,15*8760
+SET,,,,,NYEAR*8760
 LCOPER,SUB,1
-/TITLE,Vertical displacement since geostatic state (m), October, year 15
+/TITLE,Vertical displacement since geostatic state (m), October, year %NYEAR%
 PLNSOL,U,Y
 /SHOW,CLOSE
 FINISH
