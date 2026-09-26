@@ -39,9 +39,12 @@ python3 tools/compare_fig14.py --demo  # test the comparison plot
 | 02 | `LOAD_CASE` | 1 | 1 = paper 60.1 kPa; 2 = pavement 16.4 + traffic 17.9 kPa; 3 = user |
 | 02 | `USE_CREEP`, `M_E` | 1, 1.0 | creep on; exponent m in Eq. 6 (not given in the paper) |
 | 02 | `MSTEP` | 1 | months per structural step |
-| 02 | `ABUT_BOND`, `FKN_M` | 1, 1.0 | footing/front contact bonded; contact stiffness (fix for the rigid-body error, note §12.1) |
-| 02 | `SEAT_FIX`, `STAB` | 0, 0 | optional seat restraint; energy stabilisation |
+| 02 | `ABUT_BOND`, `BEHIND` | 2, 0 | footing/front coupled node to node; backwall contact standard (note §12.2) |
+| 02 | `MODE_CHECK` | 0 | 1 = quick support check (elastic, all coupled, LS1–LS3) - run this first |
+| 02 | `USE_PLAS`, `STAB`, `SEAT_FIX`, `FKN_M` | 1, 1, 0, 1.0 | plasticity; stabilisation from LS3; seat restraint; contact stiffness |
 
 ## Status
 
-The first ANSYS 18.1 run of `02` stopped with rigid-body motion of the abutment. The concrete is held only by contact, which started open and used the thermal run's FKN = 0.01. This is now fixed (bonded footing/front pairs, FKN = 1, loads and temperatures in separate steps); see note §12.1. The fixed version has not yet been re-run in ANSYS here (no licence); all Python checks pass.
+The ANSYS 18.1 runs of `02` stopped with rigid-body motion. The concrete abutment has its own nodes and was held only by contact, which started open and had FKN = 0.01.
+
+`02` now couples the footing and front interfaces node to node, takes the supports from the mesh, and prints a `MODEL CHECK` block and `===== LSn` markers. **Run it first with `MODE_CHECK = 1`**, then with 0 (note §12.2). The macros have not been run here (no ANSYS licence); all Python checks pass.

@@ -509,10 +509,13 @@ The first real run (ANSYS 18.1) accepted EDP, creep, THSY/REFT and `MP,DENS` in 
 | `M_E`, `C_MIN`, `PHI_MX` | 1, 5 kPa, 50° | Eq. 6 exponent and strength safeguards |
 | `LOAD_CASE`, `Q_PAVE`, `Q_VEH`, `LOAD_CAP` | 1, –, –, 1 | surcharge (Section 7) |
 | `CR_E` | 100 MPa | crushed-rock modulus |
-| `ABUT_BOND` | 1 | footing and front contact pairs bonded (Section 12.1) |
+| `ABUT_BOND` | 2 | footing and front: 2 coupled node to node (default), 1 bonded contact, 0 standard (Section 12.2) |
 | `FKN_M` | 1.0 | contact normal stiffness factor in the structural run |
 | `SEAT_FIX` | 0 | UX = 0 at the bridge seat (superstructure restraint) |
-| `STAB` | 0 | energy stabilisation for hard-to-converge steps |
+| `STAB` | 1 | energy stabilisation from LS3 on |
+| `BEHIND` | 0 | backwall interface: 0 standard (gap), 1 no separation, 2 coupled |
+| `USE_PLAS` | 1 | 0 = elastic soil (diagnosis) |
+| `MODE_CHECK` | 0 | 1 = quick support check: elastic, all coupled, LS1–LS3 only |
 
 **Extraction macro (03)**
 
@@ -577,6 +580,32 @@ python3 tools/compare_fig14.py --demo
 - Loads (LS2) and the first temperature field (LS3) are applied in separate steps; `PRED,ON` is added.
 - Optional: `SEAT_FIX = 1` (horizontal restraint from the bridge superstructure at the seat) and `STAB = 1` (energy stabilisation).
 - `03` now takes the end of construction from LS3 and counts 3 + months load steps.
+
+### 12.2 Second run: same error. What changed and how to run now
+
+The bonded-contact fix still depends on the contact algorithm detecting the coincident surfaces. The mechanical macro now removes that dependency and reports on itself.
+
+**Changes in `02`:**
+- **`ABUT_BOND = 2` (default): footing and front interfaces are coupled node to node** (`CPINTF,UX` / `CPINTF,UY`), and their contact elements are deleted. Every concrete node on those faces has a coincident soil node (same line length and division; checked in Python). So the abutment is joined to the ground exactly, with no contact detection involved.
+- **`BEHIND`:** 0 = standard contact (gap allowed, paper), 1 = no separation, 2 = coupled.
+- **Supports are taken from the mesh extents** (`*GET … MNLOC/MXLOC`), not from the `XL`/`YB` parameters. The **ICT** profile is redefined in `02`, and `NYEAR` is checked. A missing parameter in `THERMAL.db` can no longer silently move a support.
+- **Nodes that belong to no solid element** are counted and fixed (there should be 0).
+- A **MODEL CHECK** block prints before solving (search the output for `MODEL CHECK`):
+  - model extent;
+  - number of fixed nodes on the left, right and bottom;
+  - number of nodes, solid elements and free nodes;
+  - number of standard, bonded and target contact elements;
+  - `CPLIST` of the coupled pairs.
+- **`/COM` markers** (`===== LS1 …`, `===== LS2 …`, `===== LS3 …`) show which load step was solving when an error appears.
+- **Thaw step LS3:** energy stabilisation (`STAB = 1`, 1e-4) and up to 2000 substeps.
+- **`USE_PLAS = 0`** gives elastic soil, to separate plasticity problems from support problems.
+- **`MODE_CHECK = 1`:** elastic, no creep, every interface coupled, only LS1–LS3.
+
+**How to run now:**
+1. Set `MODE_CHECK = 1` in `02` and run it (a few minutes). It must finish LS1–LS3.
+   - If it does not, the problem is outside contact and plasticity. Send the `MODEL CHECK` lines and the node number from the first error.
+2. Set `MODE_CHECK = 0` and run the full analysis.
+   - If it fails, note which `=====` marker was last printed. LS3 means the thaw step: try `BEHIND = 1`, then `USE_PLAS = 0`, to see which part is unstable.
 
 ---
 

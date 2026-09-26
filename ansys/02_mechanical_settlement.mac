@@ -34,8 +34,26 @@ RESUME,'THERMAL','db'
 *AFUN,RAD
 PI=3.14159265358979
 
+!---- values needed from THERMAL.db (checked, so a missing one is obvious)
+*GET,PTY,PARM,NYEAR,TYPE
+*IF,PTY,EQ,-1,THEN
+  *MSG,WARN
+  NYEAR was not found in THERMAL.db - using 15 years
+  NYEAR = 15
+*ENDIF
+! initial temperature profile: same table as the thermal IC (redefined here
+! so the mechanical run does not depend on it being stored in the database)
+*DEL,ICT
+*DIM,ICT,TABLE,27,1
+*TAXIS,ICT(1),1,-30,-16,-15,-14,-13,-12,-11,-10,-9,-8
+*TAXIS,ICT(11),1,-7,-6,-5,-4,-3,-2,-1.75,-1,-0.75,-0.5
+*TAXIS,ICT(21),1,-0.25,0,0.25,4,4.25,7,10
+ICT(1,1)=-0.25,-0.25,-0.27,-0.29,-0.31,-0.33,-0.36,-0.41,-0.45,-0.50
+ICT(11,1)=-0.55,-0.60,-0.65,-0.69,-0.80,-0.80,0.20,0.20,0.25,0.25
+ICT(21,1)=1.0,1.0,2.0,2.0,3.0,3.0,3.0
+
 !---------------------------- switches ---------------------------------
-NMON      = NYEAR*12 ! NYEAR, XL, YB, ICT come from THERMAL.db
+NMON      = NYEAR*12
 MSTEP     = 1        ! solve every MSTEP months (1 = monthly, 2, 3, 6, 12)
 THAW_REF  = 0        ! 0 = PAPER: thaw strain measured from the frozen state
                      !     for every soil (Eq.4 as written: eps = alpha
@@ -74,16 +92,34 @@ Q_VEH     = 0        ! vehicle equivalent uniform load (Pa)  (case 3)
 Q_TRAF    = Q_PAVE+Q_VEH
 LOAD_CAP  = 1        ! 1 = also on the road over the abutment cap (line 2)
 CR_E      = 100e6    ! crushed-rock layer (mat 11) modulus, if USE_CR = 1
-!---- contact / support of the abutment (fix for the rigid-body error)
-ABUT_BOND = 1        ! 1 = footing and front pairs bonded (foundation cast
-                     !     in the ground); behind pair stays standard, so
-                     !     the embankment can still separate (paper)
-                     ! 0 = all pairs standard frictional (can float!)
+!---- support of the abutment (fix for the rigid-body error)
+!     The concrete (abutment + footing) has its OWN nodes and is joined to
+!     the soil only through the interfaces below.
+ABUT_BOND = 2        ! footing + front interfaces:
+                     ! 2 = COUPLED node to node (CPINTF) - exact, needs no
+                     !     contact detection, cannot float (default)
+                     ! 1 = bonded contact (KEYOPT(12)=5)
+                     ! 0 = standard frictional contact (can float!)
+BEHIND    = 0        ! embankment / backwall interface:
+                     ! 0 = standard contact, gap allowed (paper)
+                     ! 1 = no separation, sliding allowed (KEYOPT(12)=4)
+                     ! 2 = coupled (no sliding, no gap)
 FKN_M     = 1.0      ! contact normal stiffness factor in the structural run
                      ! (the thermal database has 0.01 = 100x too soft)
 SEAT_FIX  = 0        ! 1 = UX = 0 at the bridge seat (superstructure restrains
                      !     the abutment horizontally, fixed bearing)
-STAB      = 0        ! 1 = energy stabilisation if a step will not converge
+USE_PLAS  = 1        ! 1 = Drucker-Prager plasticity (Eqs. 8-9), 0 = elastic
+STAB      = 1        ! 1 = energy stabilisation (1e-4) from LS3 on, where the
+                     !     soil thaws and softens
+MODE_CHECK= 0        ! 1 = QUICK MODEL CHECK: elastic, no creep, all
+                     !     interfaces coupled, only LS1-LS3 (a few minutes).
+                     !     If this converges, the model is properly supported.
+*IF,MODE_CHECK,EQ,1,THEN
+  USE_PLAS  = 0
+  USE_CREEP = 0
+  ABUT_BOND = 2
+  BEHIND    = 2
+*ENDIF
 
 !------------------ Table 3 constants, one column per material ----------
 ! row 1 a1  2 b1 (E, MPa)   3 a2  4 b2 (nu)   5 a3  6 b3 (c, MPa)
@@ -123,7 +159,11 @@ KEYOPT,1,3,2               ! PLANE STRAIN (ETCHG leaves plane stress)
 KEYOPT,2,1,0               ! CONTA172: UX, UY instead of TEMP
 KEYOPT,2,9,1               ! ignore initial gap / penetration
 KEYOPT,2,10,2              ! update contact stiffness every iteration
-KEYOPT,2,12,0              ! standard: embankment may separate (paper)
+*IF,BEHIND,EQ,1,THEN
+  KEYOPT,2,12,4            ! no separation, sliding allowed
+*ELSE
+  KEYOPT,2,12,0            ! standard: embankment may separate (paper)
+*ENDIF
 ! Friction MU (mat 8/9/10) and cohesion (real sets 8/9/10) come over from
 ! the thermal database. The thermal run used FKN = 0.01 (only TCC matters
 ! there); structurally that lets the abutment sink ~0.2 m into the soil
@@ -131,17 +171,56 @@ KEYOPT,2,12,0              ! standard: embankment may separate (paper)
 RMODIF,8,3,FKN_M
 RMODIF,9,3,FKN_M
 RMODIF,10,3,FKN_M
-! The concrete (abutment + footing) has its own nodes and is held ONLY by
-! contact. Coincident surfaces start "just touching" = open for standard
-! contact, so the weightless concrete floats in LS1 (pivot warnings) and
-! falls when its weight is switched on (UY > 1e6, rigid-body error).
-! Fix: bonded contact for the footing (real 10) and front (real 9) pairs,
-! on their own element type because KEYOPTs belong to the element type.
+
+!---- abutment support. Coincident concrete/soil surfaces start "just
+!     touching", which standard contact treats as OPEN (no stiffness):
+!     the concrete then floats (pivot warnings) and falls (UY > 1e6).
+!     Concrete lines / soil lines of each interface:
+!       footing  8, 24, 25, 26  /  48, 49, 50, 51   (real set 10)
+!       front   13, 22, 23      /  52, 53, 54       (real set 9)
+!       behind   3 ... 7        /  43 ... 47        (real set 8)
+NCPL = 0
+*IF,ABUT_BOND,EQ,2,THEN
+  NCPL = 1
+*ENDIF
+*IF,BEHIND,EQ,2,THEN
+  NCPL = 1
+*ENDIF
+*IF,NCPL,EQ,1,THEN
+  LSEL,NONE
+  *IF,ABUT_BOND,EQ,2,THEN
+    LSEL,A,,,8
+    LSEL,A,,,13
+    LSEL,A,,,22,26
+    LSEL,A,,,48,54
+  *ENDIF
+  *IF,BEHIND,EQ,2,THEN
+    LSEL,A,,,3,7
+    LSEL,A,,,43,47
+  *ENDIF
+  NSLL,S,1
+  CPINTF,UX,1e-4           ! couple coincident concrete/soil node pairs
+  CPINTF,UY,1e-4
+  ALLSEL,ALL
+  ! the contact / target elements of coupled interfaces are not needed
+  ESEL,NONE
+  *IF,ABUT_BOND,EQ,2,THEN
+    ESEL,A,REAL,,9,10
+  *ENDIF
+  *IF,BEHIND,EQ,2,THEN
+    ESEL,A,REAL,,8
+  *ENDIF
+  ESEL,R,TYPE,,2,3
+  *GET,NEDEL,ELEM,0,COUNT
+  *IF,NEDEL,GT,0,THEN
+    EDELE,ALL
+  *ENDIF
+  ALLSEL,ALL
+*ENDIF
 *IF,ABUT_BOND,EQ,1,THEN
   ET,4,CONTA172
   KEYOPT,4,1,0
-  KEYOPT,4,2,0             ! augmented Lagrange (penalty) - no MPC
-                           ! over-constraint at shared corner nodes
+  KEYOPT,4,2,0             ! augmented Lagrange (penalty)
   KEYOPT,4,9,1
   KEYOPT,4,10,2
   KEYOPT,4,12,5            ! bonded (always)
@@ -217,6 +296,7 @@ TBDELE,ALL,1,11
   !---- Eq.8 and Eq.9: c(T), phi(T) -> Drucker-Prager matched to
   !     Mohr-Coulomb in plane strain:
   !     alpha = 3*sqrt3*tan(phi)/sqrt(9+12tan^2), sigY = 3*sqrt3*c/sqrt(..)
+  *IF,USE_PLAS,EQ,1,THEN
   TB,EDP,MI,NT,,LYFUN
   *DO,J,1,NT
     TJ = TPT(J)
@@ -242,6 +322,7 @@ TBDELE,ALL,1,11
     TBTEMP,TPT(J)
     TBDATA,1,0.0
   *ENDDO
+  *ENDIF
 
   !---- Eq.5 creep, frozen soil only. Differentiating Eq.5 gives the
   !     ANSYS time-hardening law (TBOPT=2):
@@ -276,14 +357,31 @@ MP,EX,11,CR_E
 MP,PRXY,11,0.30
 
 !======================= boundary conditions ============================
-! paper: sides fixed horizontally, bottom fixed vertically, surfaces free
+! paper: sides fixed horizontally, bottom fixed vertically, surfaces free.
+! Extents are taken from the mesh itself (not from XL / YB parameters).
 ALLSEL,ALL
-NSEL,S,LOC,X,XL
+*GET,XMIN_M,NODE,0,MNLOC,X
+*GET,XMAX_M,NODE,0,MXLOC,X
+*GET,YMIN_M,NODE,0,MNLOC,Y
+NSEL,S,LOC,X,XMIN_M
+*GET,N_LEFT,NODE,0,COUNT
 D,ALL,UX,0
-NSEL,S,LOC,X,15
+NSEL,S,LOC,X,XMAX_M
+*GET,N_RIGHT,NODE,0,COUNT
 D,ALL,UX,0
-NSEL,S,LOC,Y,YB
+NSEL,S,LOC,Y,YMIN_M
+*GET,N_BOT,NODE,0,COUNT
 D,ALL,UY,0
+! nodes that belong to no solid element have no stiffness at all
+ALLSEL,ALL
+ESEL,S,TYPE,,1
+NSLE,S
+NSEL,INVE
+*GET,N_ORPH,NODE,0,COUNT
+*IF,N_ORPH,GT,0,THEN
+  D,ALL,UX,0
+  D,ALL,UY,0
+*ENDIF
 ALLSEL,ALL
 *IF,SEAT_FIX,EQ,1,THEN     ! bridge seat, y = 6, x = -1.5 ... 0
   ESEL,S,MAT,,7
@@ -295,6 +393,29 @@ ALLSEL,ALL
 *ENDIF
 ACEL,0,9.81,0              ! gravity (acts in -y)
 TREF,0
+
+!---- MODEL CHECK printed to the output (search for "MODEL CHECK")
+ALLSEL,ALL
+*GET,N_NODE,NODE,0,COUNT
+ESEL,S,TYPE,,1
+*GET,N_SOLID,ELEM,0,COUNT
+ESEL,S,TYPE,,2
+*GET,N_CON2,ELEM,0,COUNT
+ESEL,S,TYPE,,3
+*GET,N_TAR,ELEM,0,COUNT
+ESEL,S,TYPE,,4
+*GET,N_CON4,ELEM,0,COUNT
+ALLSEL,ALL
+N_CONT = N_CON2+N_CON4
+*MSG,NOTE,XMIN_M,XMAX_M,YMIN_M
+MODEL CHECK: x from %G to %G, bottom y = %G
+*MSG,NOTE,N_LEFT,N_RIGHT,N_BOT
+MODEL CHECK: fixed nodes left %I, right %I, bottom %I
+*MSG,NOTE,N_NODE,N_SOLID,N_ORPH
+MODEL CHECK: %I nodes, %I solid elements, %I free nodes
+*MSG,NOTE,N_CON2,N_CON4,N_TAR
+MODEL CHECK: contact elements %I standard, %I bonded, %I target
+CPLIST                     ! lists the coupled node pairs (footing, front)
 FINISH
 
 !=========================== solution ===================================
@@ -309,11 +430,9 @@ PRED,ON
 KBC,0
 OUTRES,ERASE
 OUTRES,ALL,LAST
-*IF,STAB,EQ,1,THEN
-  STABILIZE,CONSTANT,ENERGY,1e-4
+*IF,N_CONT,GT,0,THEN
+  CNCHECK,SUMMARY          ! initial status of every contact pair
 *ENDIF
-CNCHECK,SUMMARY            ! prints the initial status of every contact pair
-                           ! (bonded pairs must be CLOSED)
 
 ALLSEL,ALL
 *GET,NMAX,NODE,0,NUM,MAX
@@ -337,13 +456,15 @@ MP,DENS,11,1e-3
   *IF,NSEL(I),EQ,1,THEN
     YY = NY(I)
     TT0 = ICT(YY)
-    *IF,SOILN(I),GT,0,AND,THAW_REF,EQ,0,THEN
+    SNI = SOILN(I)
+    *IF,SNI,GT,0,AND,THAW_REF,EQ,0,THEN
       BF,I,TEMP,T_FRZ
     *ELSE
       BF,I,TEMP,TT0
     *ENDIF
   *ENDIF
 *ENDDO
+/COM, ===== LS1 geostatic (ground self weight) =====
 TIME,0.5
 NSUBST,5,100,2
 SOLVE
@@ -361,6 +482,7 @@ LSEL,S,,,55,56             ! embankment top
 NSLL,S,1
 SF,ALL,PRES,Q_TRAF
 ALLSEL,ALL
+/COM, ===== LS2 construction loads (fill, abutment, pavement + traffic) =====
 TIME,0.75
 NSUBST,20,400,10
 SOLVE
@@ -376,10 +498,15 @@ SOLVE
     TMAX(I) = TT0
   *ENDIF
 *ENDDO
+*IF,STAB,EQ,1,THEN
+  STABILIZE,CONSTANT,ENERGY,1e-4   ! check SENE (stabilisation energy)
+*ENDIF                             ! stays small vs. strain energy
+/COM, ===== LS3 initial temperatures (thaw of active layer and fill) =====
 TIME,1
-NSUBST,20,400,10
+NSUBST,50,2000,20
 SOLVE
 
+*IF,MODE_CHECK,EQ,0,THEN
 !---- LS4...: monthly temperature fields from the thermal run
 *IF,USE_CREEP,EQ,1,THEN
   RATE,ON
@@ -390,9 +517,11 @@ SOLVE
   LDREAD,TEMP,,,TNOW,,'THERMAL','rth'
   *IF,IRREV,EQ,1,THEN
     *DO,I,1,NMAX
-      *IF,SOILN(I),GT,0,THEN
+      SNI = SOILN(I)
+      *IF,SNI,GT,0,THEN
         *GET,TN0,NODE,I,BF,TEMP
-        *IF,TN0,GT,TMAX(I),THEN
+        TMI = TMAX(I)
+        *IF,TN0,GT,TMI,THEN
           TMAX(I) = TN0
         *ENDIF
         BF,I,TEMP,TMAX(I)
@@ -400,9 +529,10 @@ SOLVE
     *ENDDO
   *ENDIF
   TIME,TNOW
-  NSUBST,5,200,2
+  NSUBST,5,400,2
   SOLVE
 *ENDDO
+*ENDIF
 SAVE
 FINISH
 ! next: /INPUT,'03_extract_results','mac'
