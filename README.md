@@ -1,71 +1,128 @@
-# Freeze-thaw settlement: sequential thermo-mechanical analysis (ANSYS MAPDL)
+# Freeze-thaw settlement of an embankment–bridge transition (ANSYS MAPDL)
 
-Embankment and bridge-abutment transition on warm permafrost. The method follows
-Chen et al., *Engineering Failure Analysis* 163 (2024) 108476, §3.2.2–3.3, Tables 1–3.
+This is a sequential thermo-mechanical analysis that reproduces Chen et al., *Engineering Failure Analysis* 163 (2024) 108476. The target is **Fig. 14**: settlement at 0–20 m behind the abutment in the Middle Section, in years 3 and 15.
 
-| File | What it does |
-|---|---|
-| `ansys/01_thermal_transient.mac` | Step 1: 15-year transient thermal run (your script, three edits marked `!>>> SETTLEMENT`). Writes `THERMAL.db` and `THERMAL.rth`. |
-| `ansys/02_mechanical_settlement.mac` | Step 2: reads the month-end temperature fields and solves for stress, deformation and settlement. Writes `settlement_history.csv`. |
-| `tools/settlement_check.py` | Prints every property table that step 2 generates, plus a 1-D hand check of thaw settlement. |
+| Step | File | Output |
+|---|---|---|
+| 1 Thermal | `ansys/01_thermal_transient.mac` | `THERMAL.db`, `THERMAL.rth` |
+| 2 Mechanical | `ansys/02_mechanical_settlement.mac` | `MECH.db`, `MECH.rst` |
+| 3 Extract | `ansys/03_extract_results.mac` | `thaw_depth.csv`, `temp_profiles.csv`, `fig14_profiles.csv`, `settlement_history.csv`, PNG contours |
+| 4 Compare | `tools/compare_fig14.py` | `fig14_comparison.png`, FE vs. paper table, 1-D check |
+| – | `tools/settlement_check.py` | property tables from Eqs. 6–9, creep magnitude, 1-D thaw settlement |
 
-## How to run
+Run all three macros in one working directory, in order (`/INPUT,01_thermal_transient,mac`, then 02, then 03). Then run `python3 tools/compare_fig14.py <that directory>`.
 
-1. Run `01_thermal_transient.mac` in batch or with `/INPUT`. Check the 0 °C isotherm and compare with Fig. 9 of the paper (October, cycle 15).
-2. Run `02_mechanical_settlement.mac` in the **same working directory**.
-3. Open `settlement_history.csv`. Columns P1–P7 are settlements in mm (positive = downward), measured from the end of construction:
+---
 
-| Col | Location |
-|---|---|
-| P1 | embankment top next to the abutment (x = −6.85) |
-| P2–P4 | embankment top at x = −10, −15, −20 |
-| P5 | top of the abutment cap |
-| P6 | embankment base, original ground, x = −10 |
-| P7 | natural ground in front of the abutment, x = +5 |
+## Step 1: thermal analysis (what was corrected)
 
-- **P1 − P5** is the differential settlement at the bridge head (the "bump").
-- **P1 − P6** is the part that comes from the embankment itself.
+| # | Problem in the original script | Correction |
+|---|---|---|
+| 1 | Jobname was `file` | `/FILNAME,THERMAL`, so steps 2 and 3 can find the results |
+| 2 | `nsel,s,loc,y,-28` selected **no nodes** because the bottom was at y = −20, so no geothermal flux was applied at all | Flux is applied at `y = YB`, with the paper's value 0.02 W/m² = **72 J/m²·h** (was 131) |
+| 3 | Model depth was 20 m | **30 m** (`YB = -30`), matching Table 2 (mudstone 8–30 m) and the ICT profile |
+| 4 | The embankment ended at x = −20, only ~14 m behind the abutment, but Fig. 14 needs 20 m | `XL = -50` (~44 m behind the abutment), so the 0–20 m range is clear of the adiabatic, fixed boundary |
+| 5 | Layers were assigned by node bands, patched with hard-coded element numbers (6430, 4927…) that change as soon as the mesh changes | Layers assigned by **element centroid** at the Table 2 depths: fill y > 0, gravel 0–0.5, sandy 0.5–2, sub-clay 2–8, mudstone 8–30 m |
+| 6 | Mat 4 (mudstone) had no latent peak between −0.2 and 0 °C | Peak = 42 466 J/kg·°C, which gives mudstone the same latent heat as gravel (Table 2: same density 1800 and water content 15 %). ENTH is regenerated to match. Switch: `FIX_M4` |
+| 7 | Crushed-rock layer was on, but the paper has no mitigation measure | `USE_CR = 0` for the paper case. Turn it on afterwards to test mitigation |
+| 8 | The mechanical tables had copy errors (7.83e8, a repeated row) | Removed from the thermal run; step 2 builds all properties from Table 3 |
 
-## How settlement is computed
+**Already consistent with the paper (checked):**
+- Table 1 boundary temperatures: ground −0.48/11, embankment top 1.5/12.5, abutment 2/16, and warming 0.052 °C/yr = 5.94e-6 °C/h.
+- Table 2 conductivity, heat capacity and density. Your ENTH tables are the exact trapezoidal integral of your C tables (verified to 7 digits).
 
-**One-way coupling.** Temperature changes the soil, but deformation does not change temperature. The thermal run is solved first. Then, for every month *k*, the structural run reads `T(x, y, t_k)` with `LDREAD,TEMP` as a body load. Both runs use the same clock (hours), so month *k* is `t = 730·k` h in both. `OUTRES,ALL,5` in step 1 already writes the last substep of every month, which is what step 2 reads.
+**Clock:** t = 0 is mid-October (surface temperature at its mean and falling). So:
+- **October of year N** = N·8760 h. This is when thaw depth is largest, and it is the month the paper compares in.
+- **April of year N** = N·8760 − 4380 h.
 
-**Element change.** `ETCHG,TTS` turns PLANE55 into PLANE182. KEYOPT(3) is then set to 2 (**plane strain**); ETCHG would otherwise leave plane stress. CONTA172 is switched to KEYOPT(1)=0 (UX, UY). The embankment can open a gap from the abutment (standard contact), with friction 0.6 / 0.5 / 0.3 as in your contact pairs.
+**Thermal checks before running step 2** (all produced by step 3, part A):
+- `temp_profiles.csv`, October of year 15: natural ground within about 0.1–0.2 °C of Fig. 9; −0.3 °C at a depth of 10 m near the abutment.
+- `thaw_depth.csv`: the thaw depth next to the abutment should reach about 3 m (year 3) and about 6 m (year 15), as the paper describes.
+
+**Not modelled:** the paper's protection cone in front of the abutment (Table 1: 1.5/15). It mainly affects the ground in front of the abutment, not the embankment behind it.
+
+---
+
+## Step 2: mechanical analysis
+
+**One-way coupling.** The element type changes from PLANE55 to PLANE182 (with KEYOPT(3)=2, **plane strain**). CONTA172 is switched to UX/UY. Each month, `LDREAD,TEMP` reads that month's temperature field as a body load.
 
 ### Equations → ANSYS input
 
-| Paper | Meaning | ANSYS implementation |
-|---|---|---|
-| Eq. 4, ε<sub>k</sub> = α (0 when T < 0 °C) | thaw settlement strain | Total thermal strain `MP,THSY` = 0 below `THS_1` and −α/100 above `THS_2` (0 → 0.1 °C ramp). `MP,REFT` = −1 for soil frozen at t = 0 (mats 3, 4) and +1 for soil thawed at t = 0 (mats 1, 2, 5), so each soil starts strain-free. Vertical only by default (`VERT_ONLY=1`, 1-D thaw consolidation). |
-| Eq. 5, ε<sub>c</sub> = Aσ<sup>B</sup>t<sup>C</sup>e<sup>−D/T</sup> | frozen-soil creep | Differentiated in time, this is ANSYS time-hardening creep `TB,CREEP,,,,2` with C1 = A·C·e<sup>D/\|T\|</sup>, C2 = B, C3 = C − 1, C4 = 0. The temperature term goes into a temperature-dependent C1 table, which is 0 in thawed soil and uses \|T\| ≥ 0.1 °C to avoid blow-up at 0 °C. `RATE,ON` from step 2 onward. |
-| Eq. 6, E = a<sub>1</sub> + b<sub>1</sub>\|T\|<sup>m</sup> | stiffness | `MPDATA,EX` on 18 temperatures from −20 to 40 °C, with \|T\| = 0 when thawed |
-| Eq. 7, ν = a<sub>2</sub> + b<sub>2</sub>\|T\| | Poisson's ratio | `MPDATA,PRXY`, same temperatures |
-| Eqs. 8–9, c, φ = a + b\|T\| | strength | Extended Drucker–Prager `TB,EDP,LYFUN` fitted to Mohr–Coulomb in plane strain: α = 3√3·tanφ/√(9+12tan²φ), σ<sub>Y</sub> = 3√3·c/√(9+12tan²φ). Zero dilatancy (`LFPOT` = 0). |
-| §3.3 boundaries | | Sides UX = 0, bottom UY = 0, surfaces free, self weight, 60.1 kPa on the embankment top |
+| Paper | ANSYS input |
+|---|---|
+| Eq. 4, ε<sub>k</sub> = α when thawed, 0 when frozen | Total thermal strain `MP,THSY`: 0 below 0 °C, −α above 0.1 °C. Vertical only (1-D thaw consolidation) |
+| Eq. 5, ε<sub>c</sub> = Aσ<sup>B</sup>t<sup>C</sup>e<sup>−D/T</sup> | Time-hardening creep `TB,CREEP,,,,2` with C1 = A·C·e<sup>D/\|T\|</sup>, C2 = B, C3 = C − 1. Frozen soil only; σ in kPa, t in hours |
+| Eqs. 6–7, E and ν | `MPDATA,EX / PRXY` at 18 temperatures from −20 to 40 °C |
+| Eqs. 8–9, c and φ | `TB,EDP` Drucker–Prager, plane-strain fit to Mohr–Coulomb |
+| §3.3 boundary conditions | Sides UX = 0, bottom UY = 0, surfaces free, 60.1 kPa traffic, and the embankment may separate from the abutment |
 
-The load step sequence:
+### Load steps (so the result is defined as in Fig. 14)
 
-1. **LS1** applies self weight and traffic at the initial ICT temperature profile, with no creep. This is the end-of-construction reference state.
-2. **LS2 … LS181** apply the month-end temperature fields with creep on. Settlement = UY(t) − UY(LS1).
+- **LS1 (geostatic):** self-weight of the natural ground only; the embankment, abutment and crushed rock are weightless. **This is the settlement reference.** The ground's own self-weight compression is therefore not counted as settlement, as in the paper ("initial ground stress includes its self-weight").
+- **LS2 (end of construction):** embankment and abutment weight, 60.1 kPa traffic, and the initial temperature field.
+- **LS3 onward:** monthly temperatures from `THERMAL.rth`, with creep on.
 
-**Where the settlement comes from.** Ice-rich sub-clay (α = 12 %) dominates, so settlement grows roughly as 12 cm for every metre the permafrost table drops into the sub-clay. `tools/settlement_check.py` gives a 1-D estimate from the 0 °C isotherm depth. Use it to check the FE result under the embankment centre: a drop from 1.9 m to 5 m gives about 365 mm.
+### Why the defaults are `THAW_REF = 0` and `IRREV = 0` ("paper" mode)
 
-### Reversible or irreversible thaw
+Fig. 14 shows embankment-body settlement of **about 2 cm far from the abutment and 11–12 cm next to it, with almost no change between year 3 and year 15**. That pattern is what Eq. 4 gives when it is applied as written:
+- The strain is α whenever T > 0, measured from the frozen state, so the thawed part of the 7 m fill contributes 1 % × thawed thickness.
+- Far from the abutment the fill mostly refreezes, leaving about 2 cm.
+- Next to the warm abutment it stays thawed: 7 cm, plus compression.
 
-- **`IRREV=0`** (default, same as the paper): the soil follows the current temperature. Soil that thaws and does not refreeze (the permafrost under the embankment) settles permanently. The active layer heaves in winter and settles back in summer.
-- **`IRREV=1`**: each soil node uses the highest temperature it has reached so far. Thaw settlement then never recovers (an upper bound). Stiffness and creep are then also evaluated at that highest temperature, which is conservative.
+The foundation settlement near the abutment then follows the thaw depth. Sub-clay has α = 12 %, and a thaw depth of about 6 m by year 15 gives about 61 cm (paper: 61 cm).
 
-## What you need to decide or check
+Other settings:
+- `THAW_REF = 1`: soil that is already thawed at t = 0 starts strain-free.
+- `IRREV = 1`: thaw settlement never recovers and there is no frost heave. Use this for design sensitivity rather than for reproducing the paper.
 
-1. **m in Eq. 6 is not given in the paper.** The script uses `M_E = 1`. Run 0.5 and 1.0 to see the effect. It matters only for cold soil (|T| > 1 °C); near 0 °C the result barely changes.
-2. **Creep units are not stated in the paper.** The script uses σ in kPa and t in hours (`SIG_U = 1000`, `TIM_U = 1`). That gives creep strain of about 5·10⁻⁴ over 15 years in sub-clay at −0.3 °C, which is plausible. With σ in Pa, A = 3.68e-7 would give unrealistic strain (> 50 %).
-3. **Geothermal flux fix.** In your original script, `nsel,s,loc,y,-28` selected no nodes (the bottom is y = −20), so no flux was applied. This is now fixed. Also note the paper uses 0.02 W/m² (72 J/m²·h), while you used 131. The value is set by `QGEO`, so re-check the thermal validation after this change.
-4. **Mat 4 heat capacity** still has no latent peak between −0.2 and 0 °C (your own CHECK note). ENTH has the same gap, so fix both together if it is a typo.
-5. **The old EX tables in the thermal script** have copy errors (7.83e8, and a repeated row). Step 2 deletes them and rebuilds all properties from Table 3.
-6. **Commands to verify in your ANSYS version.** I wrote this without an ANSYS licence, so the scripts have not been run.
-   - `TB,EDP` with `TBTEMP` combined with `TB,CREEP` (EDP creep).
+---
+
+## Step 3: extracting results
+
+`03_extract_results.mac` writes:
+
+- **`fig14_profiles.csv`**: for every year, April and October, and d = 0…20 m:
+  - `tot`: settlement of the embankment top (y = 7)
+  - `fnd`: settlement of the embankment base (y = 0)
+  - `emb` = tot − fnd
+  - `fnd_pct`, `emb_pct`: shares of the total (Fig. 14b)
+  - `tot_ft`, `fnd_ft`: the same, measured from the end of construction (freeze-thaw part only)
+- **`thaw_depth.csv`**: the deepest ground point with T ≥ 0 under each distance (d = −10 is natural ground at x = +10).
+- **`temp_profiles.csv`**: T(y) at d = 0, 5, 10, 20 m and in natural ground, October of years 3 and 15.
+- **`settlement_history.csv`**: settlement at d = 0, 5, 10, 20 m at every load step, showing growth over 15 years.
+
+**Distance** d is measured from the abutment back face at road level, x = XA − d with `XA = -6.2`. For d < 0.7 m the ground column below y = −1 is the concrete foundation, so the thaw depth there refers to soil below the footing.
+
+## Step 4: comparing with the paper
+
+```
+python3 tools/compare_fig14.py path/to/results
+```
+
+This plots your year-3 and year-15 October profiles over the paper's Fig. 14 values (read off the figure to about ±1 cm; the text gives 73 / 61 / 12 cm at d = 0 in year 15). It also prints a comparison table and a 1-D check: Σ α·(thawed thickness) from `thaw_depth.csv` against the FE foundation settlement. Use `--demo` to test the script without ANSYS results.
+
+### How to read a mismatch
+
+| Symptom | Where to look |
+|---|---|
+| Foundation settlement too low near the abutment | Thaw depth too shallow. Check the step-1 thaw depth against the paper (~3 m in year 3, ~6 m in year 15) before touching the mechanical model |
+| Right thaw depth but wrong settlement | α of sub-clay (12 %) dominates. Check that Σα·h from `compare_fig14.py` explains the FE value |
+| Settlement far from the abutment much lower than 15–25 cm | Load-induced compression: E of warm frozen soil (Eq. 6, `M_E`), and the LS1 reference |
+| Embankment body far too large | Try `THAW_REF = 1` (no thaw strain in fill that was never frozen) |
+
+The paper itself reports 75 cm calculated against about 100 cm measured, so aim for the **trend and the magnitudes** (the concave shape toward the abutment, foundation share > 80 %), not an exact match.
+
+---
+
+## Open items / what to verify in your ANSYS version
+
+1. **The exponent m in Eq. 6 is not given in the paper.** The script uses `M_E = 1`; also run 0.5.
+2. **Creep units are not stated.** The script assumes kPa and hours. With Pa the creep strain would be > 50 %, which is unrealistic. With kPa it is about 5·10⁻⁴ over 15 years, so creep is a small part of the total.
+3. **Commands, not yet run in ANSYS:**
+   - `TB,EDP` with `TBTEMP` combined with `TB,CREEP`. If it is rejected, set `USE_CREEP = 0`; creep is small anyway.
    - `MP,THSY` with `MP,REFT`.
-   - `*GET,…,NODE,n,BF,TEMP` (only used when `IRREV=1`; `NTEMP` is the alternative item).
-
-   If EDP + creep is rejected, set `USE_CREEP = 0` first to get the thaw settlement, which is the dominant part.
-7. **Convergence.** If a month fails to converge, use `MSTEP = 2` or a larger `NSUBST` maximum. If the abutment drifts (it is held only through contact), try KEYOPT(12)=5 on the footing pair (real set 10).
+   - `MP,DENS` inside `/SOLU` (the staged self-weight).
+   - `NSEL,R,TEMP` in POST1.
+4. **Model size.** With XL = −50 and YB = −30 the mesh is roughly 15–20 k elements, which fits the ANSYS Student limit. The thermal run is 180 load steps and the mechanical run 182.
+5. **Convergence.** If a month does not converge, raise the `NSUBST` maximum or use `MSTEP = 2` (Fig. 14 extraction needs `MSTEP` to be 1, 2, 3 or 6). If the abutment drifts (it is held only through contact), set KEYOPT(12)=5 on real set 10 (the footing pair).

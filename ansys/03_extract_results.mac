@@ -1,0 +1,281 @@
+!=======================================================================
+! 03_extract_results.mac
+!
+! Step 3: extract results in the form of Chen et al. (2024), Fig. 9,
+! Fig. 10-12 (thaw depth) and Fig. 14 (settlement vs. distance).
+! Run in the directory that holds THERMAL.db/.rth and MECH.db/.rst.
+!
+! Output files
+!   thaw_depth.csv      year, month, d, deepest thawed ground (m below y=0)
+!   temp_profiles.csv   T(y) at d = 0, 5, 10, 20 m and natural ground,
+!                       October of year 3 and year 15   (compare Fig. 9)
+!   fig14_profiles.csv  yr, mon, d (m), tot, fnd, emb (cm), fnd_pct,
+!                       emb_pct (% of total), tot_ft, fnd_ft (cm, freeze-
+!                       thaw only = measured from end of construction)
+!   settlement_history.csv  t (yr), total & foundation at d = 0/5/10/20 m
+!   MECH0xx.png / POST0xx.png  contour plots
+!
+! Definitions (paper Sec. 4.x, Fig. 14)
+!   d           distance behind the abutment back face, x = XA - d
+!   total       settlement of the embankment top   (y = 7)
+!   foundation  settlement of the embankment base  (y = 0)
+!   embankment  total - foundation
+!   reference   LS1 = geostatic ground, before the embankment load
+!   October of year N = N*8760 h, April = N*8760 - 4380 h
+!=======================================================================
+
+!############################ PART A: THERMAL ###########################
+/CLEAR
+/FILNAME,POST,1
+RESUME,'THERMAL','db'
+XA   = -6.2          ! abutment back face at the road surface (x)
+ND   = 21            ! d = 0,1,...,20 m
+XNAT = 10.0          ! natural ground in front of the abutment
+YTOL = 0.26          ! half-width of a node column (mesh ~0.5 m)
+
+/POST1
+FILE,'THERMAL','rth'
+ALLSEL,ALL
+ESEL,S,MAT,,1,5
+ESEL,A,MAT,,11
+NSLE,S
+CM,SOILN,NODE
+ALLSEL,ALL
+
+!---- A1: deepest thawed ground node (T >= 0) under each distance
+!     columns 1 year, 2 month (4 = April, 10 = October), 3 d (m;
+!     -10 = natural ground at x = XNAT), 4 thaw depth below y = 0 (m)
+NRA = NYEAR*2*(ND+1)
+*DEL,TD
+*DIM,TD,ARRAY,NRA,4
+IR = 0
+*DO,IY,1,NYEAR
+  *DO,IS,1,2
+    TS = IY*8760
+    MON = 10
+    *IF,IS,EQ,1,THEN
+      TS = IY*8760-4380
+      MON = 4
+    *ENDIF
+    SET,,,,,TS
+    *DO,K,1,ND+1
+      *IF,K,LE,ND,THEN
+        DD = K-1
+        XX = XA-DD
+      *ELSE
+        DD = -10
+        XX = XNAT
+      *ENDIF
+      CMSEL,S,SOILN
+      NSEL,R,LOC,X,XX-YTOL,XX+YTOL
+      NSEL,R,LOC,Y,YB,0.001
+      NSEL,R,TEMP,,0.0,1000
+      *GET,NC,NODE,0,COUNT
+      YMN = 0
+      *IF,NC,GT,0,THEN
+        *GET,YMN,NODE,0,MNLOC,Y
+      *ENDIF
+      IR = IR+1
+      TD(IR,1) = IY
+      TD(IR,2) = MON
+      TD(IR,3) = DD
+      TD(IR,4) = -YMN
+    *ENDDO
+  *ENDDO
+*ENDDO
+ALLSEL,ALL
+*CFOPEN,thaw_depth,csv
+*VWRITE
+('year,month,d_m,thaw_depth_m')
+*VWRITE,TD(1,1),TD(1,2),TD(1,3),TD(1,4)
+(F4.0,',',F4.0,',',F6.1,',',F8.3)
+*CFCLOS
+
+!---- A2: temperature profiles (October, years 3 and 15), 0.5 m steps
+!     -999 = no soil at that point (e.g. above ground in front)
+*DEL,DP
+*DIM,DP,ARRAY,5
+DP(1) = 0, 5, 10, 20
+NRY = NINT((7-YB)/0.5)+1
+*DEL,TP
+*DIM,TP,ARRAY,2*NRY,7
+*DO,IYR,1,2
+  YRS = 3
+  *IF,IYR,EQ,2,THEN
+    YRS = 15
+  *ENDIF
+  SET,,,,,YRS*8760
+  CMSEL,S,SOILN
+  *DO,K,1,NRY
+    YV = 7-0.5*(K-1)
+    IR = (IYR-1)*NRY+K
+    TP(IR,1) = YRS
+    TP(IR,2) = YV
+    *DO,J,1,5
+      *IF,J,LE,4,THEN
+        XX = XA-DP(J)
+      *ELSE
+        XX = XNAT
+      *ENDIF
+      NN = NODE(XX,YV,0)
+      TP(IR,J+2) = -999
+      DYN = ABS(NY(NN)-YV)
+      DXN = ABS(NX(NN)-XX)
+      *IF,DYN,LT,0.3,AND,DXN,LT,0.3,THEN
+        TP(IR,J+2) = TEMP(NN)
+      *ENDIF
+    *ENDDO
+  *ENDDO
+*ENDDO
+ALLSEL,ALL
+*CFOPEN,temp_profiles,csv
+*VWRITE
+('year,y_m,T_d0,T_d5,T_d10,T_d20,T_natural')
+*VWRITE,TP(1,1),TP(1,2),TP(1,3),TP(1,4),TP(1,5),TP(1,6),TP(1,7)
+(F4.0,',',F7.2,5(',',F9.3))
+*CFCLOS
+
+!---- A3: temperature contours around 0 degC, October years 3 and 15
+/SHOW,PNG
+/CONTOUR,1,8,-2,0.5,2
+SET,,,,,3*8760
+/TITLE,Temperature (degC), October, year 3
+PLNSOL,TEMP
+SET,,,,,15*8760
+/TITLE,Temperature (degC), October, year 15
+PLNSOL,TEMP
+SET,,,,,15*8760-4380
+/TITLE,Temperature (degC), April, year 15
+PLNSOL,TEMP
+/SHOW,CLOSE
+/CONTOUR,1,9
+FINISH
+
+!########################## PART B: SETTLEMENT ##########################
+RESUME,'MECH','db'
+XA   = -6.2
+ND   = 21
+/POST1
+FILE,'MECH','rst'
+ALLSEL,ALL
+ESEL,S,MAT,,1,5
+ESEL,A,MAT,,11
+NSLE,S
+CM,SOILN,NODE
+
+! top (y = 7) and base (y = 0) soil nodes at d = 0..20 m
+*DEL,NT7
+*DEL,NB0
+*DIM,NT7,ARRAY,ND
+*DIM,NB0,ARRAY,ND
+*DO,K,1,ND
+  NT7(K) = NODE(XA-(K-1),7,0)
+  NB0(K) = NODE(XA-(K-1),0,0)
+*ENDDO
+ALLSEL,ALL
+
+! reference displacements: LS1 (geostatic) and LS2 (end of construction)
+*DEL,UT1
+*DEL,UB1
+*DEL,UT2
+*DEL,UB2
+*DIM,UT1,ARRAY,ND
+*DIM,UB1,ARRAY,ND
+*DIM,UT2,ARRAY,ND
+*DIM,UB2,ARRAY,ND
+SET,1,LAST
+*DO,K,1,ND
+  UT1(K) = UY(NT7(K))
+  UB1(K) = UY(NB0(K))
+*ENDDO
+SET,2,LAST
+*DO,K,1,ND
+  UT2(K) = UY(NT7(K))
+  UB2(K) = UY(NB0(K))
+*ENDDO
+
+!---- B1: Fig. 14 profiles, every year, April and October
+!     (needs MSTEP = 1, 2, 3 or 6 so that month 12N-6 and 12N exist)
+NRB = NYEAR*2*ND
+*DEL,F14
+*DIM,F14,ARRAY,NRB,10
+IR = 0
+*DO,IY,1,NYEAR
+  *DO,IS,1,2
+    TS = IY*8760
+    MON = 10
+    *IF,IS,EQ,1,THEN
+      TS = IY*8760-4380
+      MON = 4
+    *ENDIF
+    SET,,,,,TS
+    *DO,K,1,ND
+      IR = IR+1
+      STOT = -(UY(NT7(K))-UT1(K))*100
+      SFND = -(UY(NB0(K))-UB1(K))*100
+      F14(IR,1) = IY
+      F14(IR,2) = MON
+      F14(IR,3) = K-1
+      F14(IR,4) = STOT
+      F14(IR,5) = SFND
+      F14(IR,6) = STOT-SFND
+      F14(IR,7) = 0
+      F14(IR,8) = 0
+      ASTOT = ABS(STOT)
+      *IF,ASTOT,GT,1e-6,THEN
+        F14(IR,7) = SFND/STOT*100
+        F14(IR,8) = (STOT-SFND)/STOT*100
+      *ENDIF
+      F14(IR,9)  = -(UY(NT7(K))-UT2(K))*100
+      F14(IR,10) = -(UY(NB0(K))-UB2(K))*100
+    *ENDDO
+  *ENDDO
+*ENDDO
+*CFOPEN,fig14_profiles,csv
+*VWRITE
+('yr,mon,d,tot,fnd,emb,fnd_pct,emb_pct,tot_ft,fnd_ft')
+*VWRITE,F14(1,1),F14(1,2),F14(1,3),F14(1,4),F14(1,5),F14(1,6),F14(1,7),F14(1,8),F14(1,9),F14(1,10)
+(F4.0,',',F4.0,',',F5.1,7(',',F9.2))
+*CFCLOS
+
+!---- B2: time history at d = 0, 5, 10, 20 m, every load step
+NLS = 2+NMON/MSTEP
+*DEL,HIS
+*DIM,HIS,ARRAY,NLS,9
+*DO,LS,1,NLS
+  SET,LS,LAST
+  *GET,TS,ACTIVE,0,SET,TIME
+  HIS(LS,1) = TS/8760
+  *DO,J,1,4
+    K = 1
+    *IF,J,EQ,2,THEN
+      K = 6
+    *ELSEIF,J,EQ,3
+      K = 11
+    *ELSEIF,J,EQ,4
+      K = 21
+    *ENDIF
+    HIS(LS,2*J)   = -(UY(NT7(K))-UT1(K))*100
+    HIS(LS,2*J+1) = -(UY(NB0(K))-UB1(K))*100
+  *ENDDO
+*ENDDO
+*CFOPEN,settlement_history,csv
+*VWRITE
+('t_yr,tot_d0,fnd_d0,tot_d5,fnd_d5,tot_d10,fnd_d10,tot_d20,fnd_d20')
+*VWRITE,HIS(1,1),HIS(1,2),HIS(1,3),HIS(1,4),HIS(1,5),HIS(1,6),HIS(1,7),HIS(1,8),HIS(1,9)
+(F8.3,8(',',F9.2))
+*CFCLOS
+
+!---- B3: settlement contours (relative to LS1), October years 3 and 15
+/SHOW,PNG
+LCDEF,1,1
+SET,,,,,3*8760
+LCOPER,SUB,1
+/TITLE,Vertical displacement since geostatic state (m), October, year 3
+PLNSOL,U,Y
+SET,,,,,15*8760
+LCOPER,SUB,1
+/TITLE,Vertical displacement since geostatic state (m), October, year 15
+PLNSOL,U,Y
+/SHOW,CLOSE
+FINISH

@@ -2,14 +2,25 @@
 ! 01_thermal_transient.mac
 ! Sequential thermo-mechanical analysis - STEP 1 (transient thermal)
 ! Writes THERMAL.db and THERMAL.rth, which 02_mechanical_settlement.mac
-! reads. Changes from the original script are marked  !>>> SETTLEMENT
+! and 03_extract_results.mac read.
+! Changes from the original script are marked  !>>> FIX
+!   FIX 1  fixed jobname THERMAL
+!   FIX 2  geothermal flux applied at the real bottom, paper value 0.02 W/m2
+!   FIX 3  model depth 30 m (paper Table 2: mudstone 8-30 m)
+!   FIX 4  embankment extended behind the abutment (XL) so that the
+!          0-20 m range of Fig. 14 is clear of the far boundary
+!   FIX 5  soil layers assigned by element centroid (Table 2 depths),
+!          no hard-coded element numbers (they change with the mesh)
+!   FIX 6  mat 4 latent-heat peak at -0.2..0 degC restored (FIX_M4)
+!   FIX 7  crushed-rock layer OFF by default: the paper has no measure
+!   FIX 8  mechanical tables removed (built in step 2 from Table 3)
 !=======================================================================
 /clear
-/FILNAME,THERMAL,1   !>>> SETTLEMENT: fixed jobname, read by step 2
+/FILNAME,THERMAL,1   !>>> FIX 1: fixed jobname, read by steps 2 and 3
 /prep7
 *AFUN,RAD
 PI=3.14159265358979
-USE_CR    = 1        ! 1 = add crushed-rock cooling layer, 0 = no measure
+USE_CR    = 0        !>>> FIX 7: 0 = paper case (no measure), 1 = crushed rock
 CR_TOP    = 6.0      ! layer top    (y, m)  -> 1.0 m below embankment top (y=7)
 CR_BOT    = 4.5      ! layer bottom (y, m)  -> 1.5 m thick
 CR_KS     = 1620     ! crushed rock k, warm season  (0.45 W/m.K)
@@ -17,7 +28,10 @@ CR_KW     = 8100     ! equivalent k, cold season (convection), about 5x CR_KS
 EMB_MEAN  = 1.5      ! mean annual embankment-surface temperature (original 1.5)
 EMB_AMP   = 12.5     ! annual amplitude of embankment surface
 NYEAR     = 15       ! simulated years
-QGEO      = 131      !>>> SETTLEMENT: geothermal flux, J/m2.h (paper: 0.02 W/m2 = 72)
+QGEO      = 72       !>>> FIX 2: 0.02 W/m2 = 72 J/m2.h (paper); was 131
+XL        = -50      !>>> FIX 4: left end of model (abutment back face ~ x=-6.2)
+YB        = -30      !>>> FIX 3: model bottom, 30 m below natural ground
+FIX_M4    = 1        !>>> FIX 6: 1 = restore mat 4 latent peak, 0 = original
 
 et,1,plane55
 keyopt,1,3,0
@@ -43,7 +57,14 @@ mpdata,c,3,13,35903,35903,130278,130278,1608,1608
 
 mpdata,c,4,1,981.8,981.8,1476,1476,2364,2364
 mpdata,c,4,7,3658,3658,6160,6160,16080,16080
-mpdata,c,4,13,39562,39562,1267,1267,1272,1272   ! CHECK: no latent peak at -0.2..0 (typo?)
+mpdata,c,4,13,39562,39562,1267,1267,1272,1272
+!>>> FIX 6: Table 2 gives mudstone the same dry density (1800) and water
+!    content (15 %) as the gravel soil, so it gets the same latent heat.
+!    1267 in the -0.2..0 interval was a copy of the unfrozen value; 42466
+!    makes the latent content equal to mat 1 (7.37e7 J/m3).
+*IF,FIX_M4,EQ,1,THEN
+mpdata,c,4,13,39562,39562,42466,42466,1272,1272
+*ENDIF
 
 mpdata,c,5,1,706.6,706.6,820.2,820.2,973.5,973.5 ! embankment fill
 mpdata,c,5,7,1004,1004,2156,2156,3497,3497
@@ -88,59 +109,16 @@ MPDATA,ENTH,3,13,7.317185e+07,8.983084e+07,9.116029e+07,1.328492e+08,1.339043e+0
 MPDATA,ENTH,4,1,0,1.765473e+07,1.767685e+07,3.093428e+07,3.096884e+07,3.943669e+07
 MPDATA,ENTH,4,7,3.949089e+07,4.600944e+07,4.60978e+07,5.707492e+07,5.727508e+07,7.145764e+07
 MPDATA,ENTH,4,13,7.195842e+07,9.260979e+07,9.297725e+07,9.343337e+07,9.345622e+07,1.850173e+08
+*IF,FIX_M4,EQ,1,THEN
+MPDATA,ENTH,4,13,7.195842e+07,9.260979e+07,9.334804e+07,1.086358e+08,1.090294e+08,2.005905e+08
+*ENDIF
 
 MPDATA,ENTH,5,1,0,1.45414e+07,1.455713e+07,2.298829e+07,2.300677e+07,2.699753e+07
 MPDATA,ENTH,5,7,2.70179e+07,2.906546e+07,2.909801e+07,3.349496e+07,3.355318e+07,3.708305e+07
 MPDATA,ENTH,5,13,3.721239e+07,4.262483e+07,4.336092e+07,6.907178e+07,6.972343e+07,1.407098e+08
  
-!!!!!!!!!! mechanical parameters (not used in this thermal run, kept as-is)
-!>>> SETTLEMENT: ignored. 02_mechanical_settlement.mac deletes these and
-!    rebuilds EX/PRXY/thaw strain from Table 3 (Eqs. 4-9). Note these
-!    tables have copy errors: 7.83e8 at -3 degC, and row 7 repeats row 1.
-MPDATA,EX,5,1,1.85e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
-MPDATA,EX,5,7,7.83e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
-MPDATA,EX,5,13,4.52e7,3.79e7,3.77e7,2.8e7,2.79e7,2.79e7
-
-MPDATA,PRXY,5,1,0.24,0.32,0.32,0.35,0.35,0.37
-MPDATA,PRXY,5,7,0.37,0.38,0.38,0.39,0.39,0.39
-MPDATA,PRXY,5,13,0.39,0.39,0.39,0.39,0.39,0.39
-
-MPDATA,EX,4,1,1.85e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
-MPDATA,EX,4,7,7.83e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
-MPDATA,EX,4,13,4.52e7,3.79e7,3.77e7,2.8e7,2.79e7,2.79e7
-
-MPDATA,PRXY,4,1,0.24,0.32,0.32,0.35,0.35,0.37
-MPDATA,PRXY,4,7,0.37,0.38,0.38,0.39,0.39,0.39
-MPDATA,PRXY,4,13,0.39,0.39,0.39,0.39,0.39,0.39
- 
-MPTEMP,,,,,,,,
-MPTEMP,1,-20
-MPTEMP,2,-15
-MPTEMP,3,-10
-MPTEMP,4,-7.5
-MPTEMP,5,-5
-MPTEMP,6,-4
-MPTEMP,7,-3
-MPTEMP,8,-2
-MPTEMP,9,-1
-MPTEMP,10,-0.5
-MPTEMP,11,0
-MPTEMP,12,30
-UIMP,5,REFT,,,0
-MPDE,THSX,5
-MPDATA,ALPX,5,,-0.1/20
-MPDATA,ALPX,5,,-0.1/15
-MPDATA,ALPX,5,,-0.1/10
-MPDATA,ALPX,5,,-0.1/7.5
-MPDATA,ALPX,5,,-0.1/5
-MPDATA,ALPX,5,,-0.1/4
-MPDATA,ALPX,5,,-0.1/3
-MPDATA,ALPX,5,,-0.1/2
-MPDATA,ALPX,5,,-0.1/1
-MPDATA,ALPX,5,,0
-MPDATA,ALPX,5,,0
-MPDATA,ALPX,5,,0
-MPTEMP,,,,,,,,
+!>>> FIX 8: mechanical tables removed. Step 2 builds E, nu, c, phi, thaw
+!    strain and creep from Table 3 (Eqs. 4-9).
  
 mp,dens,1,1800
 mp,dens,2,1900
@@ -152,8 +130,6 @@ mp,dens,6,40$mp,kxx,6,108$mp,c,6,1400       ! XPS board (optional)
 mp,dens,7,2500                              ! concrete
 mp,kxx,7,10584
 mp,c,7,950
-mp,EX,7,25e9
-mp,prxy,7,0.167
 !>>> NEW: crushed-rock cooling layer (material 11; 8,9,10 are used by contacts)
 mp,dens,11,1600
 mp,c,11,800
@@ -165,7 +141,7 @@ K,2,-1.5,6
 K,3,-1.5,7
 K,4,-6.2,7
 K,5,-6.2,6
-K,6,-1/6-5.2          ! CHECK: evaluates to x=-5.367, y=0. Did you mean K,6,-5.2,0 ?
+K,6,-1/6-5.2          ! x=-5.367, y=0: backwall batter point (K38 is the same)
 K,7,-5.2,-1
 K,8,-6.85,-1
 K,9,-6.85,-7
@@ -288,18 +264,18 @@ K,20,0.75,0,
 K,21,15,
 K,22,15,-1
 K,23,15,-7
-K,24,15,-20,
-K,25,0.75,-20
-K,26,0,-20
-K,27,-1.5,-20
-K,28,-5.2,-20
-K,29,-6.85,-20
-K,30,-20,-20
-K,31,-20,-7
-K,32,-20,-1
-K,33,-20,0
-K,34,-20,6
-K,35,-20,7
+K,24,15,YB
+K,25,0.75,YB
+K,26,0,YB
+K,27,-1.5,YB
+K,28,-5.2,YB
+K,29,-6.85,YB
+K,30,XL,YB     !>>> FIX 3/4
+K,31,XL,-7
+K,32,XL,-1
+K,33,XL,0
+K,34,XL,6
+K,35,XL,7
 K,36,-6.2,7
 K,37,-6.2,6
 K,38,-1/6-5.2
@@ -513,62 +489,40 @@ LSEL,S,,,48,51,1
 NSLL,S,0
 CM,CONFOOT,NODE
  
-!===================== material assignment (unchanged) ==================
+!===================== material assignment ============================
+!>>> FIX 5: by element centroid, Table 2 depths below natural ground (y=0)
+!    embankment fill y>0 | gravel 0-0.5 | sandy 0.5-2 | sub-clay 2-8 |
+!    weathered mudstone 8-30. Same layers as the original node bands, but
+!    independent of mesh size and element numbering.
 allsel,all
-nsel,s,loc,y,-0.25,0
-nsel,u,loc,x,0.01,0.51
-esln,
-mpchg,1,all
-allsel,all
-nsel,s,loc,y,-1.75,-0.75
-nsel,u,loc,x,0.01,0.51
-esln,
-mpchg,2,all
-allsel,all
-nsel,s,loc,y,-7.75,-2.25
-nsel,u,loc,x,0.01,0.51
-esln,
-mpchg,3,all
-allsel,all
-nsel,s,loc,y,-9.75,-8.25
-nsel,u,loc,x,0.01,0.51
-esln,
-mpchg,4,all
-allsel,all
-nsel,s,loc,y,-30,-10.25
-esln,
-mpchg,4,all
-allsel,all
-nsel,s,loc,y,0.01,10
-esln,
-mpchg,5,all
-allsel,all
-ASEL,s,,,1,9,1
-NSLA,S,
-esln,
+asel,s,,,1,9               ! abutment + foundation (concrete)
+esla,s
 mpchg,7,all
 allsel,all
-FLST,5,2,2,ORDE,2
-FITEM,5,6430
-FITEM,5,6433
-ESEL,S, , ,P51X
+asel,s,,,10,25             ! soil
+esla,s
+cm,SOILE,elem
+esel,r,cent,y,0,100
+mpchg,5,all
+cmsel,s,SOILE
+esel,r,cent,y,-0.5,0
+mpchg,1,all
+cmsel,s,SOILE
+esel,r,cent,y,-2.0,-0.5
 mpchg,2,all
-FLST,5,2,2,ORDE,2
-FITEM,5,4927
-FITEM,5,-4928
-ESEL,S, , ,P51X
+cmsel,s,SOILE
+esel,r,cent,y,-8.0,-2.0
 mpchg,3,all
-FLST,5,4,2,ORDE,2
-FITEM,5,4929
-FITEM,5,-4932
-ESEL,S, , ,P51X
+cmsel,s,SOILE
+esel,r,cent,y,YB,-8.0
 mpchg,4,all
+allsel,all
  
 !>>> NEW: crushed-rock cooling layer in the embankment behind the abutment
 *IF,USE_CR,EQ,1,THEN
   ALLSEL,ALL
   ESEL,S,CENT,Y,CR_BOT,CR_TOP
-  ESEL,R,CENT,X,-20,-6.85
+  ESEL,R,CENT,X,XL,-6.85
   ESEL,R,MAT,,5
   MPCHG,11,ALL
   ALLSEL,ALL
@@ -758,10 +712,10 @@ nsll,s,1
 D,ALL,TEMP,%lumian%
  
 ! geothermal flux at the bottom
-!>>> SETTLEMENT: the model bottom is y = -20 (K24..K30). The original
-!    "nsel,s,loc,y,-28" selected no nodes, so no flux was applied.
+!>>> FIX 2: the original "nsel,s,loc,y,-28" selected no nodes (bottom was
+!    y=-20), so no flux was applied. Now at the real bottom, paper value.
 allsel,all
-nsel,s,loc,y,-20
+nsel,s,loc,y,YB
 SF,ALL,HFLUX,QGEO
  
 !===================== initial temperature ==============================
@@ -801,7 +755,9 @@ CNVTOL,TEMP, ,,2,
 LNSRCH,1
 PRED,ON,,ON
 outres,all,5            ! every 5th substep + last substep of every month
-                        ! (step 2 reads the month-end sets with LDREAD)
+                        ! (steps 2 and 3 read the month-end sets)
+! Clock: t = 0 is mid-October (surface T = mean and falling), so
+!   October of year N = N*8760 h (max thaw depth), April = N*8760-4380 h
  
 
 *SET,NMON,NYEAR*12
