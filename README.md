@@ -10,6 +10,7 @@ This is a sequential thermo-mechanical analysis that reproduces Chen et al., *En
 |---|---|---|
 | 1 Thermal | `ansys/01_thermal_transient.mac` | `THERMAL.db`, `THERMAL.rth` |
 | 2 Mechanical | `ansys/02_mechanical_settlement.mac` | `MECH.db`, `MECH.rst` |
+| 2 (simplified) | `ansys/02_mechanical_settlement_3yr.mac` | elastic, 3 years, April/October snapshots; built on the version that ran in ANSYS 18.1; writes `settlement_3yr.csv` and UY path plots |
 | 3 Extract | `ansys/03_extract_results.mac` | `thaw_depth.csv`, `temp_profiles.csv`, `fig14_profiles.csv`, `settlement_history.csv`, PNG contours |
 | 4 Compare | `tools/compare_fig14.py` | `fig14_comparison.png`, FE vs. paper table, 1-D check |
 

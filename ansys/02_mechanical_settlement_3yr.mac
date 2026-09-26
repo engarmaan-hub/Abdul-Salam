@@ -1,0 +1,369 @@
+!=======================================================================
+! 02_mechanical_settlement_3yr.mac
+! STEP 2: sequential structural settlement analysis, 3 service years.
+!
+! Built on the user's version that runs in ANSYS 18.1 (standard contact,
+! FKN = 1, concrete carrying weight so the contact closes, ALPY thaw
+! strain, LDREAD by load step). Corrections:
+!   1  E, nu per soil from Table 3 (Eqs. 6-7) - the old run used the
+!      embankment-fill table for every soil (mudstone 5x too soft)
+!   2  geostatic step with K0 initial stress (INISTATE): the ground is
+!      in equilibrium and does NOT settle; embankment weightless in LS1
+!   3  thaw strain table on a geometric grid: error 1.25 % instead of up
+!      to 22.5 % (secant ALPY is interpolated linearly between points)
+!   4  temperatures in LS1-LS2 = frozen reference (-1 C), not 0 C
+!   5  bulk unit weights rho_d*(1+w); small strain (NLGEOM,OFF)
+!   6  temperature snapshots every 6 months (April / October), and
+!      settlement (UY) written out in the form of Fig. 14
+!
+! Needs THERMAL.db / THERMAL.rth (01_thermal_transient.mac, one load step
+! per month: month M = load step M, t = 730*M h, October = months 12, 24, 36)
+! Units: m, kg, N, Pa. Soil is linear elastic with temperature-dependent
+! E, nu (as in the user's run). Thaw strain is reversible (paper mode:
+! alpha wherever T > 0, zero when frozen).
+!=======================================================================
+/CLEAR
+/FILNAME,MECH3,1
+RESUME,THERMAL,db
+/PREP7
+
+!---------------------------- switches ---------------------------------
+NYR      = 3         ! service years to simulate
+GEO_INI  = 1         ! 1 = K0 initial stress (geostatic, no settlement)
+                     ! 0 = plain gravity (settlement then measured from LS1)
+T_FRZ    = -1.0      ! temperature of LS1-LS2 (frozen, no thaw strain)
+Q_TRAF   = 60.1e3    ! traffic / pavement surcharge (Pa), paper Sec. 3.3
+XA       = -6.2      ! abutment back face at road level (d = 0)
+M_E      = 1.0       ! exponent m in Eq. 6 (not given in the paper)
+
+!---- purge thermal loads (as in the user's run)
+LSCLEAR,ALL
+DDELE,ALL,ALL
+SFDELE,ALL,ALL
+BFDELE,ALL,ALL
+ICDELE
+
+!---- thermal -> structural (as in the user's run: this combination runs)
+ETCHG,TTS                  ! PLANE55 -> PLANE182 (contact types kept)
+KEYOPT,1,3,2               ! plane strain
+KEYOPT,1,1,0               ! full integration, B-bar
+KEYOPT,2,1,0               ! CONTA172: UX, UY
+KEYOPT,2,2,0               ! augmented Lagrange
+KEYOPT,2,4,2               ! nodal detection, normal to target
+KEYOPT,2,10,2              ! stiffness update every iteration
+KEYOPT,2,12,0              ! standard contact: gap allowed (paper)
+RMODIF,8,3,1.0             ! FKN = 1 (thermal db had 0.01)
+RMODIF,8,4,0.5             ! FTOLN
+RMODIF,9,3,1.0
+RMODIF,9,4,0.5
+RMODIF,10,3,1.0
+RMODIF,10,4,0.5
+MP,MU,8,0.6
+MP,MU,9,0.5
+MP,MU,10,0.3
+
+!---- concrete above ground gets its own material number (12) so that it
+!     can be weightless in the geostatic step; same properties as mat 7
+ESEL,S,TYPE,,1
+ESEL,R,MAT,,7
+ESEL,R,CENT,Y,0,100
+MPCHG,12,ALL
+ALLSEL,ALL
+
+!======================= soil properties (Table 3) ======================
+! columns = mats 1..5: a1 b1 (E, MPa) | a2 b2 (nu) | alpha (%) | rho_d | w
+*DEL,SP
+*DIM,SP,ARRAY,7,5
+SP(1,1) = 34, 30, 0.42,-0.007,  1, 1800, 0.15   ! 1 gravel soil  0-0.5 m
+SP(1,2) = 36, 30, 0.42,-0.007,  5, 1900, 0.10   ! 2 sandy soil   0.5-2 m
+SP(1,3) = 28, 26, 0.40,-0.008, 12, 1600, 0.30   ! 3 sub-clay     2-8 m
+SP(1,4) =140,108, 0.25,-0.004,  1, 1800, 0.15   ! 4 mudstone     8-30 m
+SP(1,5) = 61, 53, 0.35,-0.007,  1, 2060, 0.06   ! 5 fill (cobbly soil)
+
+! temperature grid for E and nu (the user's grid)
+*DEL,TG
+*DIM,TG,ARRAY,18
+TG(1)  = -20,-10,-5,-2,-1,-0.5,-0.2,0,0.2
+TG(10) = 0.5,1,2,5,10,15,20,30,40
+! geometric grid for the secant thaw coefficient: 0.1 * 1.25^k
+*DEL,TA
+*DIM,TA,ARRAY,30
+TA(1) = -50
+TA(2) = 0
+*DO,K,3,30
+  TA(K) = 0.1*1.25**(K-3)
+*ENDDO
+
+*DEL,K0M
+*DEL,RHOM
+*DIM,K0M,ARRAY,5
+*DIM,RHOM,ARRAY,5
+*DO,MI,1,5
+  A1 = SP(1,MI)
+  B1 = SP(2,MI)
+  A2 = SP(3,MI)
+  B2 = SP(4,MI)
+  ALF = SP(5,MI)/100
+  RHOM(MI) = SP(6,MI)*(1+SP(7,MI))           ! bulk density
+  NUF = A2+B2*ABS(T_FRZ)
+  K0M(MI) = NUF/(1-NUF)                      ! K0 at the frozen reference
+  !---- Eq. 6-7: E = a1 + b1|T|^m, nu = a2 + b2|T| (|T| only when frozen)
+  MPTEMP
+  *DO,J,1,18
+    MPTEMP,J,TG(J)
+  *ENDDO
+  *DO,J,1,18
+    TJ = TG(J)
+    TAB = 0
+    *IF,TJ,LT,0,THEN
+      TAB = -TJ
+    *ENDIF
+    EV = A1*1e6
+    *IF,TAB,GT,0,THEN
+      EV = (A1+B1*TAB**M_E)*1e6
+    *ENDIF
+    MPDATA,EX,MI,J,EV
+    MPDATA,PRXY,MI,J,A2+B2*TAB
+  *ENDDO
+  !---- Eq. 4: thaw strain -alpha (vertical) when T > 0, 0 when frozen.
+  !     Secant coefficient with REFT = 0: eps = ALPY(T)*T = -alpha
+  MPTEMP
+  *DO,K,1,30
+    MPTEMP,K,TA(K)
+  *ENDDO
+  *DO,K,1,30
+    TK = TA(K)
+    AV = 0
+    *IF,TK,GT,0,THEN
+      AV = -ALF/TK
+    *ENDIF
+    MPDATA,ALPY,MI,K,AV
+  *ENDDO
+  MP,ALPX,MI,0
+  MP,ALPZ,MI,0
+  MP,REFT,MI,0
+  MP,DENS,MI,RHOM(MI)
+*ENDDO
+
+!---- concrete (7 = buried footing, 12 = abutment above ground)
+MPTEMP
+*DO,MC,7,12,5
+  MP,EX,MC,25e9
+  MP,PRXY,MC,0.167
+  MP,ALPX,MC,1.0e-5
+  MP,ALPY,MC,1.0e-5
+  MP,REFT,MC,0
+  MP,DENS,MC,2500
+*ENDDO
+TREF,0
+
+!======================= supports (from the mesh) =======================
+ALLSEL,ALL
+*GET,XMIN_M,NODE,0,MNLOC,X
+*GET,XMAX_M,NODE,0,MXLOC,X
+*GET,YMIN_M,NODE,0,MNLOC,Y
+NSEL,S,LOC,X,XMIN_M
+D,ALL,UX,0
+NSEL,S,LOC,X,XMAX_M
+D,ALL,UX,0
+NSEL,S,LOC,Y,YMIN_M
+D,ALL,UX,0
+D,ALL,UY,0
+ALLSEL,ALL
+FINISH
+
+!=======================================================================
+! SOLUTION
+!=======================================================================
+/SOLU
+ANTYPE,STATIC
+NLGEOM,OFF                 ! small strain (settlement << dimensions)
+NROPT,UNSYM                ! friction
+LNSRCH,ON
+NEQIT,100
+CNVTOL,F,,0.01,2,1.0
+AUTOTS,ON
+KBC,0
+OUTRES,ALL,LAST
+ACEL,0,9.81,0
+BFUNIF,TEMP,T_FRZ          ! LS1-LS2: frozen reference, no thaw strain
+
+!-----------------------------------------------------------------------
+! LS1  GEOSTATIC: natural ground in equilibrium, no settlement.
+!      Embankment and abutment above ground are weightless. The footing
+!      carries the weight of the ground it replaced (its weight also keeps
+!      the footing contact closed, so the concrete is supported).
+!-----------------------------------------------------------------------
+MP,DENS,5,1.0              ! embankment fill: not built yet
+MP,DENS,12,1.0             ! abutment above ground: not built yet
+MP,DENS,7,2080             ! footing = the ground it replaced
+*IF,GEO_INI,EQ,1,THEN
+  ! sigma_v = g * sum(rho_bulk * thickness above the element centroid),
+  ! sigma_x = sigma_z = K0 * sigma_v (compression negative). With the
+  ! same densities as gravity this is in exact equilibrium.
+  INISTATE,SET,DTYP,STRE
+  ESEL,S,TYPE,,1
+  ESEL,R,CENT,Y,-100,0
+  *GET,EMX,ELEM,0,NUM,MAX
+  *DO,IE,1,EMX
+    *IF,ESEL(IE),EQ,1,THEN
+      DD = -CENTRY(IE)
+      H1 = (DD+ABS(DD))/2
+      H1 = (H1+0.5-ABS(H1-0.5))/2              ! gravel   0-0.5 m
+      H2 = DD-0.5
+      H2 = (H2+ABS(H2))/2
+      H2 = (H2+1.5-ABS(H2-1.5))/2              ! sandy    0.5-2 m
+      H3 = DD-2
+      H3 = (H3+ABS(H3))/2
+      H3 = (H3+6-ABS(H3-6))/2                  ! sub-clay 2-8 m
+      H4 = DD-8
+      H4 = (H4+ABS(H4))/2                      ! mudstone 8-30 m
+      SV = 9.81*(RHOM(1)*H1+RHOM(2)*H2+RHOM(3)*H3+RHOM(4)*H4)
+      LM = 4
+      *IF,DD,LT,8,THEN
+        LM = 3
+      *ENDIF
+      *IF,DD,LT,2,THEN
+        LM = 2
+      *ENDIF
+      *IF,DD,LT,0.5,THEN
+        LM = 1
+      *ENDIF
+      KK = K0M(LM)
+      INISTATE,DEFINE,IE,,,,-KK*SV,-SV,-KK*SV,0
+    *ENDIF
+  *ENDDO
+  ALLSEL,ALL
+*ENDIF
+/COM, ===== LS1 geostatic =====
+TIME,1
+NSUBST,5,50,2
+SOLVE
+
+!-----------------------------------------------------------------------
+! LS2  CONSTRUCTION: embankment + abutment weight, traffic 60.1 kPa
+!-----------------------------------------------------------------------
+MP,DENS,5,RHOM(5)
+MP,DENS,12,2500
+MP,DENS,7,2500
+ALLSEL,ALL
+NSEL,S,LOC,Y,6.99,7.01     ! embankment top (soil) + road over the cap
+NSEL,R,LOC,X,XMIN_M,-1.5
+SF,ALL,PRES,Q_TRAF
+ALLSEL,ALL
+/COM, ===== LS2 construction =====
+TIME,2
+NSUBST,10,100,5
+SOLVE
+
+!-----------------------------------------------------------------------
+! LS3...  FREEZE-THAW: temperature field every 6 months (April, October).
+!         Elastic + reversible thaw strain, so each state depends only on
+!         its own temperature field.
+!-----------------------------------------------------------------------
+NSNAP = 2*NYR
+*DO,IS,1,NSNAP
+  MON = 6*IS               ! months 6 (Apr), 12 (Oct), 18, 24, 30, 36
+  LDREAD,TEMP,MON,LAST,,,'THERMAL','rth'
+  /COM, ===== LS thaw snapshot, month %MON% =====
+  TIME,MON*730
+  NSUBST,20,200,10
+  SOLVE
+*ENDDO
+SAVE
+FINISH
+
+!=======================================================================
+! RESULTS
+!=======================================================================
+/POST1
+!---- geostatic check: LS1 must not move the ground
+SET,1,LAST
+NSORT,U,SUM
+*GET,UG,SORT,0,MAX
+NUSORT
+UGMM = UG*1000
+*MSG,NOTE,UGMM
+GEOSTATIC CHECK: max |U| in LS1 = %G mm (should be ~0)
+
+!---- settlement at d = 0..30 m behind the abutment (Fig. 14 definitions)
+!     total = top of embankment (y = 7), foundation = base (y = 0),
+!     embankment = total - foundation; reference = LS1 (geostatic)
+ND = 31
+ESEL,S,TYPE,,1
+ESEL,R,MAT,,1,5
+NSLE,S
+*DEL,NTP
+*DEL,NBS
+*DIM,NTP,ARRAY,ND
+*DIM,NBS,ARRAY,ND
+*DO,K,1,ND
+  NTP(K) = NODE(XA-(K-1),7,0)
+  NBS(K) = NODE(XA-(K-1),0,0)
+*ENDDO
+ALLSEL,ALL
+*DEL,UT0
+*DEL,UB0
+*DIM,UT0,ARRAY,ND
+*DIM,UB0,ARRAY,ND
+*DO,K,1,ND
+  UT0(K) = UY(NTP(K))
+  UB0(K) = UY(NBS(K))
+*ENDDO
+NLS = 2+NSNAP
+*DEL,RS
+NRS = (NLS-1)*ND
+*DIM,RS,ARRAY,NRS,6
+IR = 0
+*DO,LSN,2,NLS
+  SET,LSN,LAST
+  *GET,TS,ACTIVE,0,SET,TIME
+  MON = 0
+  *IF,LSN,GT,2,THEN
+    MON = NINT(TS/730)
+  *ENDIF
+  *DO,K,1,ND
+    IR = IR+1
+    ST = -(UY(NTP(K))-UT0(K))*100
+    SB = -(UY(NBS(K))-UB0(K))*100
+    RS(IR,1) = MON
+    RS(IR,2) = K-1
+    RS(IR,3) = ST
+    RS(IR,4) = SB
+    RS(IR,5) = ST-SB
+    RS(IR,6) = 0
+    AST = ABS(ST)
+    *IF,AST,GT,1e-6,THEN
+      RS(IR,6) = SB/ST*100
+    *ENDIF
+  *ENDDO
+*ENDDO
+*CFOPEN,settlement_3yr,csv
+*VWRITE
+('month,d_m,total_cm,foundation_cm,embankment_cm,found_pct')
+*VWRITE,RS(1,1),RS(1,2),RS(1,3),RS(1,4),RS(1,5),RS(1,6)
+(F4.0,',',F5.1,4(',',F9.3))
+*CFCLOS
+! month 0 = LS2 (end of construction)
+
+!---- path plots of settlement, October of the last year (month 12*NYR)
+LCDEF,1,1                  ! LS1 = reference
+SET,NLS,LAST
+LCOPER,SUB,1               ! displacement since the geostatic state
+PATH,TOP,2,30,60
+PPATH,1,,XA,7
+PPATH,2,,XA-30,7
+PDEF,S_TOP,U,Y
+PATH,BASE,2,30,60
+PPATH,1,,XA,0
+PPATH,2,,XA-30,0
+PDEF,S_BASE,U,Y
+PATH,TOP
+/TITLE,UY of embankment top since geostatic state (m) - last October
+PLPATH,S_TOP
+PATH,BASE
+/TITLE,UY of embankment base (foundation) since geostatic state (m)
+PLPATH,S_BASE
+/TITLE,Vertical displacement since geostatic state (m) - last October
+PLNSOL,U,Y
+FINISH

@@ -670,6 +670,34 @@ This lives in the thermal mesh, which is why no change in `02` alone could cure 
 
 If a stage fails, send the `MODEL CHECK` lines, the last `=====` marker and the first error.
 
+### 12.4 The run that worked (user's 3-year script) and the corrected version
+
+The user's simplified script ran in ANSYS 18.1 with only the harmless ETCHG warnings. It worked because:
+- the concrete carried its full weight from the first load step;
+- FKN = 1.
+
+Under gravity the standard contact closes, so the abutment is supported. The earlier macros failed because in LS1 the concrete was *weightless* (so the contact never closed) and, in the first run, FKN was 0.01.
+
+**What its path plot shows.** `EPTOY` is the **thermal (thaw) strain** in y, not settlement.
+- A fully thawed fill or gravel point gives −1 % (α = 1 %); sand gives −5 %; sub-clay −12 %.
+- The −0.41 % to −0.91 % along the path means partly thawed nodes: temperatures in the first ramp of the table (0–0.2 °C), or nodal averaging across the thaw front.
+- Check which end of the path is the abutment. More thaw strain is expected next to it.
+- Settlement is **UY**, and it must be measured from the geostatic state.
+
+**What was wrong in that script, and is fixed in `02_mechanical_settlement_3yr.mac`:**
+
+| Problem | Effect | Fix |
+|---|---|---|
+| Every soil used the embankment-fill E/ν table | mudstone 5× too soft (27.9 vs 140 MPa thawed), sub-clay and sand wrong | Table 3, Eqs. 6–7 per soil |
+| LS1 = gravity on everything, no initial stress | LS1 already contains the ground's self-weight compression and the embankment settlement | K0 `INISTATE` for the ground, embankment and abutment above ground weightless in LS1 (their own material 12), footing = ground weight: geostatic check ≈ 0 |
+| Secant ALPY on 18 points | thaw strain up to **22.5 %** too large between points (1.225 % instead of 1 % at 0.35 °C) | 30-point geometric grid: error 1.25 % |
+| No temperature in LS1–2 (T = 0 °C) | thawed stiffness everywhere during construction | uniform −1 °C (frozen reference) in LS1–2 |
+| Dry density as unit weight | loads about 6–30 % too low | bulk density ρ_d(1+w) |
+| NLGEOM,ON | slower, no benefit (small strain) | NLGEOM,OFF |
+| One snapshot (month 36) and EPTOY output | no history, no settlement | snapshots every 6 months; `settlement_3yr.csv` (total / foundation / embankment, d = 0–30 m) and UY path plots of the top and base |
+
+It keeps the parts that made the run work: standard contact with FKN = 1 and FTOLN = 0.5, the concrete carrying weight in LS1, and `LDREAD,TEMP,month,LAST`.
+
 ---
 
 ## 13. APDL commands used (glossary)
