@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+demo_fig14_profiles.csv
+fig14_comparison.png
+column_1d.png
