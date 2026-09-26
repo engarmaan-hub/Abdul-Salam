@@ -1,0 +1,341 @@
+!=======================================================================
+! 02_mechanical_settlement.mac
+!
+! Sequential thermo-mechanical analysis - STEP 2 (structural)
+! Freeze-thaw settlement of the embankment / bridge-abutment transition
+! following Chen et al., Eng. Fail. Anal. 163 (2024) 108476:
+!   Eq.4  eps_k = alpha            thaw settlement strain (0 when frozen)
+!   Eq.5  eps_c = A s^B t^C e^(-D/T)   creep of frozen soil
+!   Eq.6  E     = a1 + b1|T|^m
+!   Eq.7  nu    = a2 + b2|T|
+!   Eq.8  c     = a3 + b3|T|
+!   Eq.9  phi   = a4 + b4|T|       (Table 3 constants)
+!
+! Needs from STEP 1 (01_thermal_transient.mac, jobname THERMAL):
+!   THERMAL.db   same mesh, materials and contact pairs
+!   THERMAL.rth  nodal temperatures at the end of every month
+!
+! Units: m, kg, N, Pa. Time in HOURS, the same clock as the thermal run,
+! so LDREAD picks the thermal result at exactly the same time.
+!
+! Output: settlement_history.csv (settlement in mm, + = downward,
+!         measured from the end of construction = load step 1)
+!=======================================================================
+/CLEAR
+/FILNAME,MECH,1
+RESUME,'THERMAL','db'
+*AFUN,RAD
+PI=3.14159265358979
+
+!---------------------------- switches ---------------------------------
+NYEAR     = 15       ! must match the thermal run
+NMON      = NYEAR*12
+MSTEP     = 1        ! solve every MSTEP months (1 = monthly, 2, 3, 4, 6, 12)
+THS_1     = 0.0      ! thaw strain starts   (degC) paper: alpha = 0 below 0 degC
+THS_2     = 0.1      ! thaw strain complete (degC) short ramp for convergence
+VERT_ONLY = 1        ! 1 = thaw strain vertical only (1-D thaw consolidation)
+                     ! 0 = same strain in x, y and z
+IRREV     = 0        ! 0 = soil follows the current temperature
+                     !     (thaw settles, refreezing heaves back)
+                     ! 1 = soil uses the highest temperature reached so far,
+                     !     so thaw settlement never recovers (upper bound)
+USE_CREEP = 1        ! 1 = frozen-soil creep, Eq.5
+SIG_U     = 1000     ! Pa per stress unit of the paper's creep law (1000 = kPa)
+TIM_U     = 1        ! hours per time unit of the paper's creep law (1 = h)
+T_CLMP    = 0.1      ! |T| floor in exp(-D/T), avoids blow-up at 0 degC
+M_E       = 1.0      ! exponent m in Eq.6 - NOT given in the paper, calibrate
+C_MIN     = 5e3      ! minimum cohesion (Pa) so cohesionless soil converges
+PHI_MX    = 50       ! cap on Eq.9 friction angle (deg) for very cold soil
+Q_TRAF    = 60.1e3   ! equivalent static traffic load on embankment top (Pa)
+CR_E      = 100e6    ! crushed-rock layer (mat 11) modulus, elastic (Pa)
+
+!------------------ Table 3 constants, one column per material ----------
+! row 1 a1  2 b1 (E, MPa)   3 a2  4 b2 (nu)   5 a3  6 b3 (c, MPa)
+!     7 a4  8 b4 (phi, deg) 9 alpha (thaw settlement coefficient, %)
+!    10 A  11 B  12 C  13 D (creep)
+!    14 REFT: +1 = soil was thawed at t = 0 (active layer, embankment)
+!             -1 = soil was frozen at t = 0 (permafrost)
+*DEL,MPT
+*DIM,MPT,ARRAY,14,5
+MPT(1,1) = 34, 30, 0.42,-0.007, 0.00, 0.600, 31     ! mat 1 gravel soil
+MPT(8,1) = 4.0, 1, 2e-14, 2.06, 0.32, 0.10, 1
+MPT(1,2) = 36, 30, 0.42,-0.007, 0.00, 0.600, 31     ! mat 2 sandy soil
+MPT(8,2) = 4.0, 5, 2e-14, 2.06, 0.32, 0.10, 1
+MPT(1,3) = 28, 26, 0.40,-0.008, 0.15, 0.090, 22     ! mat 3 sub-clay
+MPT(8,3) = 8.0, 12, 2.98e-7, 1.07, 0.07, 0.52, -1
+MPT(1,4) = 140, 108, 0.25,-0.004, 0.10, 0.240, 28   ! mat 4 weathered mudstone
+MPT(8,4) = 11.0, 1, 2.86e-7, 1.07, 0.06, 0.52, -1
+MPT(1,5) = 61, 53, 0.35,-0.007, 0.03, 0.094, 23     ! mat 5 embankment fill
+MPT(8,5) = 9.5, 1, 3.68e-7, 1.18, 0.08, 0.54, 1     !       (cobbly soil)
+
+! temperature points for E, nu, c, phi and creep
+*DEL,TPT
+*DIM,TPT,ARRAY,18
+TPT(1)  = -20,-15,-10,-7.5,-5,-4,-3,-2,-1.5
+TPT(10) = -1,-0.75,-0.5,-0.3,-0.2,-0.1,0,1,40
+NT = 18
+
+!======================= element and material change ====================
+/PREP7
+DDELE,ALL,TEMP             ! thermal boundary conditions out
+SFDELE,ALL,HFLUX
+ICDELE
+
+ETCHG,TTS                  ! PLANE55 -> PLANE182
+KEYOPT,1,1,0               ! full integration, B-bar
+KEYOPT,1,3,2               ! PLANE STRAIN (ETCHG leaves plane stress)
+KEYOPT,2,1,0               ! CONTA172: UX, UY instead of TEMP
+KEYOPT,2,9,1               ! ignore initial gap / penetration
+KEYOPT,2,10,2              ! update contact stiffness every iteration
+! KEYOPT(12) = 0 (standard): the embankment may separate from the
+! abutment, as the paper assumes. Friction MU (mat 8/9/10) and the
+! cohesion in real sets 8/9/10 come over from the thermal database.
+
+! the placeholder mechanical tables in the thermal script are replaced
+MPDELE,EX,1,11
+MPDELE,PRXY,1,11
+MPDELE,ALPX,1,11
+TBDELE,ALL,1,11
+
+*DO,MI,1,5
+  A1 = MPT(1,MI)
+  B1 = MPT(2,MI)
+  A2 = MPT(3,MI)
+  B2 = MPT(4,MI)
+  A3 = MPT(5,MI)
+  B3 = MPT(6,MI)
+  A4 = MPT(7,MI)
+  B4 = MPT(8,MI)
+  DEL= MPT(9,MI)/100
+  CA = MPT(10,MI)
+  CB = MPT(11,MI)
+  CCT= MPT(12,MI)
+  CD = MPT(13,MI)
+
+  !---- Eq.6 and Eq.7: E(T), nu(T). |T| only acts in frozen soil.
+  MPTEMP
+  *DO,J,1,NT
+    MPTEMP,J,TPT(J)
+  *ENDDO
+  *DO,J,1,NT
+    TA = 0
+    *IF,TPT(J),LT,0,THEN
+      TA = -TPT(J)
+    *ENDIF
+    EV = A1*1e6
+    *IF,TA,GT,0,THEN
+      EV = (A1+B1*TA**M_E)*1e6
+    *ENDIF
+    MPDATA,EX,MI,J,EV
+    MPDATA,PRXY,MI,J,A2+B2*TA
+  *ENDDO
+
+  !---- Eq.4: thaw strain = -alpha once T > THS_2, 0 below THS_1.
+  !     Entered as total thermal strain (THSX/Y/Z), measured from REFT,
+  !     so soil starts strain-free in its initial frozen/thawed state.
+  MPTEMP
+  MPTEMP,1,-50,THS_1,THS_2,50
+  MPDATA,THSY,MI,1,0,0,-DEL,-DEL
+  *IF,VERT_ONLY,EQ,1,THEN
+    MPDATA,THSX,MI,1,0,0,0,0
+    MPDATA,THSZ,MI,1,0,0,0,0
+  *ELSE
+    MPDATA,THSX,MI,1,0,0,-DEL,-DEL
+    MPDATA,THSZ,MI,1,0,0,-DEL,-DEL
+  *ENDIF
+  MP,REFT,MI,MPT(14,MI)
+
+  !---- Eq.8 and Eq.9: c(T), phi(T) -> Drucker-Prager matched to
+  !     Mohr-Coulomb in plane strain:
+  !     alpha = 3*sqrt3*tan(phi)/sqrt(9+12tan^2), sigY = 3*sqrt3*c/sqrt(..)
+  TB,EDP,MI,NT,,LYFUN
+  *DO,J,1,NT
+    TA = 0
+    *IF,TPT(J),LT,0,THEN
+      TA = -TPT(J)
+    *ENDIF
+    CC = (A3+B3*TA)*1e6
+    *IF,CC,LT,C_MIN,THEN
+      CC = C_MIN
+    *ENDIF
+    PHI = A4+B4*TA
+    *IF,PHI,GT,PHI_MX,THEN
+      PHI = PHI_MX
+    *ENDIF
+    TN = TAN(PHI*PI/180)
+    RT = SQRT(9+12*TN*TN)
+    TBTEMP,TPT(J)
+    TBDATA,1,3*SQRT(3)*TN/RT,3*SQRT(3)*CC/RT
+  *ENDDO
+  TB,EDP,MI,NT,,LFPOT        ! flow potential: zero dilatancy
+  *DO,J,1,NT
+    TBTEMP,TPT(J)
+    TBDATA,1,0.0
+  *ENDDO
+
+  !---- Eq.5 creep, frozen soil only. Differentiating Eq.5 gives the
+  !     ANSYS time-hardening law (TBOPT=2):
+  !       d(eps)/dt = C1 s^C2 t^C3 e^(-C4/T)
+  !       C1 = A*C*SIG_U^-B*TIM_U^-C*exp(D/|T|), C2 = B, C3 = C-1, C4 = 0
+  !     exp(-D/T) is folded into C1(T) so the law is off in thawed soil.
+  *IF,USE_CREEP,EQ,1,THEN
+    TB,CREEP,MI,NT,4,2
+    *DO,J,1,NT
+      C1V = 0
+      *IF,TPT(J),LT,0,THEN
+        TA = -TPT(J)
+        *IF,TA,LT,T_CLMP,THEN
+          TA = T_CLMP
+        *ENDIF
+        C1V = CA*CCT*SIG_U**(-CB)*TIM_U**(-CCT)*EXP(CD/TA)
+      *ENDIF
+      TBTEMP,TPT(J)
+      TBDATA,1,C1V,CB,CCT-1,0
+    *ENDDO
+  *ENDIF
+*ENDDO
+
+! concrete abutment / foundation (mat 7): EX, PRXY, DENS already set
+MP,EX,7,25e9
+MP,PRXY,7,0.167
+MP,ALPX,7,1.0e-5
+MP,REFT,7,2.0
+! crushed-rock cooling layer (mat 11), elastic, no thaw strain
+MP,EX,11,CR_E
+MP,PRXY,11,0.30
+
+!======================= boundary conditions and loads ==================
+! paper: sides fixed horizontally, bottom fixed vertically, surfaces free
+ALLSEL,ALL
+NSEL,S,LOC,X,-20
+D,ALL,UX,0
+NSEL,S,LOC,X,15
+D,ALL,UX,0
+NSEL,S,LOC,Y,-20
+D,ALL,UY,0
+! traffic load 60.1 kPa on the embankment top (lines 55, 56)
+ALLSEL,ALL
+LSEL,S,,,55,56
+NSLL,S,1
+SF,ALL,PRES,Q_TRAF
+ALLSEL,ALL
+ACEL,0,9.81,0              ! self weight (acts in -y)
+TREF,0
+
+! settlement monitoring points (x, y)
+*DEL,MX
+*DEL,MY
+*DIM,MX,ARRAY,7
+*DIM,MY,ARRAY,7
+MX(1) = -6.85, -10, -15, -20, -3.85, -10, 5
+MY(1) =  7,     7,   7,   7,   7,     0,  0
+! P1 embankment top next to abutment  P2..P4 embankment top 10/15/20 m
+! P5 abutment cap top                 P6 embankment base (orig. ground)
+! P7 natural ground in front of abutment
+FINISH
+
+!=========================== solution ===================================
+/SOLU
+ANTYPE,STATIC
+NLGEOM,OFF
+NROPT,UNSYM                ! friction 0.3-0.6
+AUTOTS,ON
+LNSRCH,ON
+NEQIT,50
+KBC,0
+OUTRES,ERASE
+OUTRES,ALL,LAST
+
+! soil nodes (for IRREV: concrete keeps its current temperature)
+ALLSEL,ALL
+*GET,NMAX,NODE,0,NUM,MAX
+*DEL,TMAX
+*DEL,SOILN
+*DIM,TMAX,ARRAY,NMAX
+*DIM,SOILN,ARRAY,NMAX
+ESEL,S,MAT,,1,5
+ESEL,A,MAT,,11
+NSLE,S
+*VGET,SOILN(1),NODE,1,NSEL
+ALLSEL,ALL
+
+!---- load step 1: self weight + traffic at the initial ground
+!     temperature (same ICT profile as the thermal IC). This is the
+!     end-of-construction state; settlement is measured from here.
+RATE,OFF
+*DO,I,1,NMAX
+  *IF,NSEL(I),EQ,1,THEN
+    YY = NY(I)
+    TT0 = ICT(YY)
+    BF,I,TEMP,TT0
+    TMAX(I) = TT0
+  *ENDIF
+*ENDDO
+TIME,1
+NSUBST,10,200,5
+SOLVE
+
+!---- load steps 2..: monthly temperature fields from the thermal run
+*IF,USE_CREEP,EQ,1,THEN
+  RATE,ON
+  CUTCONTROL,CRPLIMIT,1.0,1
+*ENDIF
+*DO,IM,MSTEP,NMON,MSTEP
+  TNOW = IM*730
+  LDREAD,TEMP,,,TNOW,,'THERMAL','rth'
+  *IF,IRREV,EQ,1,THEN
+    *DO,I,1,NMAX
+      *IF,SOILN(I),GT,0,THEN
+        *GET,TN0,NODE,I,BF,TEMP
+        *IF,TN0,GT,TMAX(I),THEN
+          TMAX(I) = TN0
+        *ENDIF
+        BF,I,TEMP,TMAX(I)
+      *ENDIF
+    *ENDDO
+  *ENDIF
+  TIME,TNOW
+  NSUBST,5,200,2
+  SOLVE
+*ENDDO
+SAVE
+FINISH
+
+!========================= post-processing ==============================
+/POST1
+NREC = NMON/MSTEP+1
+*DEL,SETL
+*DEL,NMN
+*DEL,UY0
+*DIM,SETL,ARRAY,NREC,8
+*DIM,NMN,ARRAY,7
+*DIM,UY0,ARRAY,7
+ALLSEL,ALL
+*DO,K,1,7
+  NMN(K) = NODE(MX(K),MY(K),0)
+*ENDDO
+SET,1,LAST
+*DO,K,1,7
+  UY0(K) = UY(NMN(K))
+*ENDDO
+*DO,LS,1,NREC
+  SET,LS,LAST
+  *GET,TNOW,ACTIVE,0,SET,TIME
+  SETL(LS,1) = TNOW/8760
+  *DO,K,1,7
+    SETL(LS,K+1) = -(UY(NMN(K))-UY0(K))*1000     ! mm, + = settlement
+  *ENDDO
+*ENDDO
+*CFOPEN,settlement_history,csv
+*VWRITE
+('t_yr,P1,P2,P3,P4,P5,P6,P7')
+*VWRITE,SETL(1,1),SETL(1,2),SETL(1,3),SETL(1,4),SETL(1,5),SETL(1,6),SETL(1,7),SETL(1,8)
+(F8.3,7(',',F10.2))
+*CFCLOS
+
+! contour: settlement since end of construction, last month
+LCDEF,1,1
+SET,LAST
+LCOPER,SUB,1
+/TITLE,Vertical displacement since end of construction (m) - last month
+PLNSOL,U,Y

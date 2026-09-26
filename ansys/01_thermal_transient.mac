@@ -1,0 +1,825 @@
+!=======================================================================
+! 01_thermal_transient.mac
+! Sequential thermo-mechanical analysis - STEP 1 (transient thermal)
+! Writes THERMAL.db and THERMAL.rth, which 02_mechanical_settlement.mac
+! reads. Changes from the original script are marked  !>>> SETTLEMENT
+!=======================================================================
+/clear
+/FILNAME,THERMAL,1   !>>> SETTLEMENT: fixed jobname, read by step 2
+/prep7
+*AFUN,RAD
+PI=3.14159265358979
+USE_CR    = 1        ! 1 = add crushed-rock cooling layer, 0 = no measure
+CR_TOP    = 6.0      ! layer top    (y, m)  -> 1.0 m below embankment top (y=7)
+CR_BOT    = 4.5      ! layer bottom (y, m)  -> 1.5 m thick
+CR_KS     = 1620     ! crushed rock k, warm season  (0.45 W/m.K)
+CR_KW     = 8100     ! equivalent k, cold season (convection), about 5x CR_KS
+EMB_MEAN  = 1.5      ! mean annual embankment-surface temperature (original 1.5)
+EMB_AMP   = 12.5     ! annual amplitude of embankment surface
+NYEAR     = 15       ! simulated years
+QGEO      = 131      !>>> SETTLEMENT: geothermal flux, J/m2.h (paper: 0.02 W/m2 = 72)
+
+et,1,plane55
+keyopt,1,3,0
+ET,2,CONTA172
+KEYOPT,2,1,2
+ET,3,TARGE169
+!!!!!!!!! material properties
+mptemp,1,-20,-10.01,-10,-5.01,-5,-3.01
+mptemp,7,-3,-2.01,-2,-1.01,-1,-0.51
+mptemp,13,-0.5,-0.21,-0.2,0,0.01,40
+ 
+mpdata,c,1,1,977.2,977.2,1152,1152,1776,1776
+mpdata,c,1,7,3362,3362,5572,5572,18693,18693
+mpdata,c,1,13,30344,30344,66718,66718,1266,1266
+
+mpdata,c,2,1,810,810,992.5,992.5,1231,1231
+mpdata,c,2,7,1278,1278,3126,3126,5278,5278
+mpdata,c,2,13,14212,14212,99886,99886,1044,1044
+
+mpdata,c,3,1,1222,1222,1737,1737,2702,2702
+mpdata,c,3,7,6640,6640,6678,6678,11864,11864
+mpdata,c,3,13,35903,35903,130278,130278,1608,1608
+
+mpdata,c,4,1,981.8,981.8,1476,1476,2364,2364
+mpdata,c,4,7,3658,3658,6160,6160,16080,16080
+mpdata,c,4,13,39562,39562,1267,1267,1272,1272   ! CHECK: no latent peak at -0.2..0 (typo?)
+
+mpdata,c,5,1,706.6,706.6,820.2,820.2,973.5,973.5 ! embankment fill
+mpdata,c,5,7,1004,1004,2156,2156,3497,3497
+mpdata,c,5,13,9060,9060,62405,62405,861.7,861.7
+ 
+mpdata,kxx,1,1,6552,6552,6552,6552,6552,6552
+mpdata,kxx,1,7,6552,6552,6552,6552,6552,6552
+mpdata,kxx,1,13,6552,6552,6552,6552,5760,5760
+
+mpdata,kxx,2,1,9405,9405,9405,9405,9405,9405
+mpdata,kxx,2,7,9405,9405,9405,9405,9405,9405
+mpdata,kxx,2,13,9405,9405,9405,9405,6897,6897
+
+mpdata,kxx,3,1,7632,7632,7632,7632,7632,7632
+mpdata,kxx,3,7,7632,7632,7632,7632,7632,7632
+mpdata,kxx,3,13,7632,7632,7632,7632,5112,5112
+
+mpdata,kxx,4,1,6552,6552,6552,6552,6552,6552
+mpdata,kxx,4,7,6552,6552,6552,6552,6552,6552
+mpdata,kxx,4,13,6552,6552,6552,6552,5760,5760
+
+mpdata,kxx,5,1,5040,5040,5040,5040,5040,5040   ! embankment fill
+mpdata,kxx,5,7,5040,5040,5040,5040,5040,5040
+mpdata,kxx,5,13,5040,5040,5040,5040,4140,4140
+ 
+!>>> NEW: enthalpy (J/m3) = integral of DENS*C dT over the same 18 points.
+!    It holds exactly the same latent heat as the C tables above, but
+!    ANSYS evaluates the capacity as dH/dT over the step, so latent heat
+!    is conserved even when a time step jumps across -0.5..0 degC.
+MPDATA,ENTH,1,1,0,1.757201e+07,1.759117e+07,2.793844e+07,2.796479e+07,3.432642e+07
+MPDATA,ENTH,1,7,3.437266e+07,4.036375e+07,4.044415e+07,5.037346e+07,5.059184e+07,6.707907e+07
+MPDATA,ENTH,1,13,6.75204e+07,8.335997e+07,8.423353e+07,1.08252e+08,1.088639e+08,1.999931e+08
+
+MPDATA,ENTH,2,1,0,1.537461e+07,1.539173e+07,2.480163e+07,2.482275e+07,2.947716e+07
+MPDATA,ENTH,2,7,2.9501e+07,3.190491e+07,3.194675e+07,3.782676e+07,3.79066e+07,4.282041e+07
+MPDATA,ENTH,2,13,4.300557e+07,5.083638e+07,5.192031e+07,8.987699e+07,9.083583e+07,1.7016e+08
+
+MPDATA,ENTH,3,1,0,1.953245e+07,1.955612e+07,3.342433e+07,3.345984e+07,4.206301e+07
+MPDATA,ENTH,3,7,4.213774e+07,5.26555e+07,5.276205e+07,6.334e+07,6.348834e+07,7.278971e+07
+MPDATA,ENTH,3,13,7.317185e+07,8.983084e+07,9.116029e+07,1.328492e+08,1.339043e+08,2.367906e+08
+
+MPDATA,ENTH,4,1,0,1.765473e+07,1.767685e+07,3.093428e+07,3.096884e+07,3.943669e+07
+MPDATA,ENTH,4,7,3.949089e+07,4.600944e+07,4.60978e+07,5.707492e+07,5.727508e+07,7.145764e+07
+MPDATA,ENTH,4,13,7.195842e+07,9.260979e+07,9.297725e+07,9.343337e+07,9.345622e+07,1.850173e+08
+
+MPDATA,ENTH,5,1,0,1.45414e+07,1.455713e+07,2.298829e+07,2.300677e+07,2.699753e+07
+MPDATA,ENTH,5,7,2.70179e+07,2.906546e+07,2.909801e+07,3.349496e+07,3.355318e+07,3.708305e+07
+MPDATA,ENTH,5,13,3.721239e+07,4.262483e+07,4.336092e+07,6.907178e+07,6.972343e+07,1.407098e+08
+ 
+!!!!!!!!!! mechanical parameters (not used in this thermal run, kept as-is)
+!>>> SETTLEMENT: ignored. 02_mechanical_settlement.mac deletes these and
+!    rebuilds EX/PRXY/thaw strain from Table 3 (Eqs. 4-9). Note these
+!    tables have copy errors: 7.83e8 at -3 degC, and row 7 repeats row 1.
+MPDATA,EX,5,1,1.85e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
+MPDATA,EX,5,7,7.83e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
+MPDATA,EX,5,13,4.52e7,3.79e7,3.77e7,2.8e7,2.79e7,2.79e7
+
+MPDATA,PRXY,5,1,0.24,0.32,0.32,0.35,0.35,0.37
+MPDATA,PRXY,5,7,0.37,0.38,0.38,0.39,0.39,0.39
+MPDATA,PRXY,5,13,0.39,0.39,0.39,0.39,0.39,0.39
+
+MPDATA,EX,4,1,1.85e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
+MPDATA,EX,4,7,7.83e8,1.32e8,1.32e8,9.63e7,9.63e7,7.83e7
+MPDATA,EX,4,13,4.52e7,3.79e7,3.77e7,2.8e7,2.79e7,2.79e7
+
+MPDATA,PRXY,4,1,0.24,0.32,0.32,0.35,0.35,0.37
+MPDATA,PRXY,4,7,0.37,0.38,0.38,0.39,0.39,0.39
+MPDATA,PRXY,4,13,0.39,0.39,0.39,0.39,0.39,0.39
+ 
+MPTEMP,,,,,,,,
+MPTEMP,1,-20
+MPTEMP,2,-15
+MPTEMP,3,-10
+MPTEMP,4,-7.5
+MPTEMP,5,-5
+MPTEMP,6,-4
+MPTEMP,7,-3
+MPTEMP,8,-2
+MPTEMP,9,-1
+MPTEMP,10,-0.5
+MPTEMP,11,0
+MPTEMP,12,30
+UIMP,5,REFT,,,0
+MPDE,THSX,5
+MPDATA,ALPX,5,,-0.1/20
+MPDATA,ALPX,5,,-0.1/15
+MPDATA,ALPX,5,,-0.1/10
+MPDATA,ALPX,5,,-0.1/7.5
+MPDATA,ALPX,5,,-0.1/5
+MPDATA,ALPX,5,,-0.1/4
+MPDATA,ALPX,5,,-0.1/3
+MPDATA,ALPX,5,,-0.1/2
+MPDATA,ALPX,5,,-0.1/1
+MPDATA,ALPX,5,,0
+MPDATA,ALPX,5,,0
+MPDATA,ALPX,5,,0
+MPTEMP,,,,,,,,
+ 
+mp,dens,1,1800
+mp,dens,2,1900
+mp,dens,3,1600
+mp,dens,4,1800
+mp,dens,5,2060                              ! embankment fill
+mp,dens,6,40$mp,kxx,6,108$mp,c,6,1400       ! XPS board (optional)
+
+mp,dens,7,2500                              ! concrete
+mp,kxx,7,10584
+mp,c,7,950
+mp,EX,7,25e9
+mp,prxy,7,0.167
+!>>> NEW: crushed-rock cooling layer (material 11; 8,9,10 are used by contacts)
+mp,dens,11,1600
+mp,c,11,800
+mp,kxx,11,CR_KS
+ 
+
+K,1,
+K,2,-1.5,6
+K,3,-1.5,7
+K,4,-6.2,7
+K,5,-6.2,6
+K,6,-1/6-5.2          ! CHECK: evaluates to x=-5.367, y=0. Did you mean K,6,-5.2,0 ?
+K,7,-5.2,-1
+K,8,-6.85,-1
+K,9,-6.85,-7
+K,10,-5.2,-7
+K,11,0,-7
+K,12,0.75,-7
+K,13,0.75,-1
+K,14,0,-1
+K,15,0,6
+K,16,-1.5,0
+K,17,-1.5,-1
+K,18,-1.5,-7
+*DO,I,2,9
+L,I,I+1
+*ENDDO
+L,1,16
+L,16,2
+L,2,15
+L,15,1
+L,14,1
+L,2,5
+L,16,6
+L,17,16
+L,17,7
+L,18,17
+L,14,1
+L,14,17
+L,7,10
+L,14,11
+L,7,10
+L,14,11
+L,13,12
+L,14,13
+L,11,12
+L,10,18
+L,18,11
+FLST,2,4,4
+FITEM,2,9
+FITEM,2,12
+FITEM,2,11
+FITEM,2,10
+AL,P51X
+FLST,2,4,4
+FITEM,2,14
+FITEM,2,1
+FITEM,2,2
+FITEM,2,3
+AL,P51X
+FLST,2,4,4
+FITEM,2,15
+FITEM,2,10
+FITEM,2,4
+FITEM,2,14
+AL,P51X
+FLST,2,4,4
+FITEM,2,17
+FITEM,2,16
+FITEM,2,15
+FITEM,2,5
+AL,P51X
+FLST,2,4,4
+FITEM,2,20
+FITEM,2,6
+FITEM,2,7
+FITEM,2,8
+AL,P51X
+FLST,2,4,4
+FITEM,2,25
+FITEM,2,18
+FITEM,2,17
+FITEM,2,20
+AL,P51X
+FLST,2,4,4
+FITEM,2,19
+FITEM,2,13
+FITEM,2,9
+FITEM,2,16
+AL,P51X
+FLST,2,4,4
+FITEM,2,26
+FITEM,2,21
+FITEM,2,19
+FITEM,2,18
+AL,P51X
+FLST,2,4,4
+FITEM,2,24
+FITEM,2,22
+FITEM,2,23
+FITEM,2,21
+AL,P51X
+FLST,5,26,4,ORDE,2
+FITEM,5,1
+FITEM,5,-26
+CM,_Y,LINE
+LSEL, , , ,P51X
+CM,_Y1,LINE
+CMSEL,,_Y
+LESIZE,_Y1,0.25, , , , , , ,1
+MSHAPE,0,2D
+MSHKEY,1
+FLST,5,9,5,ORDE,2
+FITEM,5,1
+FITEM,5,-9
+CM,_Y,AREA
+ASEL, , , ,P51X
+CM,_Y1,AREA
+CHKMSH,'AREA'
+CMSEL,S,_Y
+AMESH,_Y1
+CMDELE,_Y
+CMDELE,_Y1
+CMDELE,_Y2
+ 
+KSEL,NONE
+LSEL,NONE
+ASEL,NONE
+ 
+K,19,0,0
+K,20,0.75,0,
+K,21,15,
+K,22,15,-1
+K,23,15,-7
+K,24,15,-20,
+K,25,0.75,-20
+K,26,0,-20
+K,27,-1.5,-20
+K,28,-5.2,-20
+K,29,-6.85,-20
+K,30,-20,-20
+K,31,-20,-7
+K,32,-20,-1
+K,33,-20,0
+K,34,-20,6
+K,35,-20,7
+K,36,-6.2,7
+K,37,-6.2,6
+K,38,-1/6-5.2
+K,39,-5.2,-1
+K,40,-6.85,-1
+K,41,-6.85,-7
+K,42,-5.2,-7
+K,43,-1.5,-7
+K,44,0,-7
+K,45,0.75,-7
+K,46,0.75,-1
+K,47,0,-1
+*DO,I,19,34
+L,I,I+1
+*ENDDO
+*DO,I,36,46
+L,I,I+1
+*ENDDO
+L,47,19
+K,48,-6.85,0
+K,49,-6.85,6
+K,50,-6.85,7
+L,35,50
+L,36,50
+L,50,49
+L,49,37
+L,49,48
+L,48,40
+L,41,29
+L,42,28
+L,43,27
+L,44,26
+L,45,25
+L,49,34
+L,38,48
+L,48,33
+L,40,32
+L,41,31
+L,46,22
+L,45,23
+L,20,46
+FLST,2,4,4
+FITEM,2,67
+FITEM,2,44
+FITEM,2,58
+FITEM,2,59
+AL,P51X
+FLST,2,4,4
+FITEM,2,43
+FITEM,2,58
+FITEM,2,57
+FITEM,2,56
+AL,P51X
+FLST,2,4,4
+FITEM,2,66
+FITEM,2,57
+FITEM,2,55
+FITEM,2,42
+AL,P51X
+FLST,2,4,4
+FITEM,2,68
+FITEM,2,59
+FITEM,2,66
+FITEM,2,41
+AL,P51X
+FLST,2,4,4
+FITEM,2,46
+FITEM,2,45
+FITEM,2,67
+FITEM,2,60
+AL,P51X
+FLST,2,4,4
+FITEM,2,69
+FITEM,2,60
+FITEM,2,68
+FITEM,2,40
+AL,P51X
+FLST,2,4,4
+FITEM,2,70
+FITEM,2,47
+FITEM,2,69
+FITEM,2,39
+AL,P51X
+FLST,2,4,4
+FITEM,2,37
+FITEM,2,61
+FITEM,2,70
+FITEM,2,38
+AL,P51X
+FLST,2,4,4
+FITEM,2,36
+FITEM,2,62
+FITEM,2,48
+FITEM,2,61
+AL,P51X
+FLST,2,4,4
+FITEM,2,35
+FITEM,2,63
+FITEM,2,49
+FITEM,2,62
+AL,P51X
+FLST,2,4,4
+FITEM,2,34
+FITEM,2,64
+FITEM,2,50
+FITEM,2,63
+AL,P51X
+FLST,2,4,4
+FITEM,2,64
+FITEM,2,33
+FITEM,2,65
+FITEM,2,51
+AL,P51X
+FLST,2,4,4
+FITEM,2,32
+FITEM,2,31
+FITEM,2,72
+FITEM,2,65
+AL,P51X
+FLST,2,4,4
+FITEM,2,52
+FITEM,2,72
+FITEM,2,30
+FITEM,2,71
+AL,P51X
+FLST,2,4,4
+FITEM,2,54
+FITEM,2,53
+FITEM,2,73
+FITEM,2,27
+AL,P51X
+FLST,2,4,4
+FITEM,2,71
+FITEM,2,29
+FITEM,2,28
+FITEM,2,73
+AL,P51X
+FLST,5,22,4,ORDE,8
+FITEM,5,29
+FITEM,5,-30
+FITEM,5,39
+FITEM,5,-54
+FITEM,5,57
+FITEM,5,59
+FITEM,5,-60
+FITEM,5,73
+CM,_Y,LINE
+LSEL, , , ,P51X
+CM,_Y1,LINE
+CMSEL,,_Y
+LESIZE,_Y1,0.25, , , , , , ,1
+FLST,5,17,4,ORDE,10
+FITEM,5,28
+FITEM,5,31
+FITEM,5,-32
+FITEM,5,37
+FITEM,5,-38
+FITEM,5,55
+FITEM,5,61
+FITEM,5,-66
+FITEM,5,68
+FITEM,5,-72
+CM,_Y,LINE
+LSEL, , , ,P51X
+CM,_Y1,LINE
+CMSEL,,_Y
+LESIZE,_Y1,0.5, , , , , , ,1
+FLST,5,16,5,ORDE,2
+FITEM,5,10
+FITEM,5,-25
+CM,_Y,AREA
+ASEL, , , ,P51X
+CM,_Y1,AREA
+CHKMSH,'AREA'
+CMSEL,S,_Y
+AMESH,_Y1
+CMDELE,_Y
+CMDELE,_Y1
+CMDELE,_Y2
+ 
+!===================== contact node components (unchanged) =============
+ALLSEL,ALL
+FLST,5,9,5,ORDE,2
+FITEM,5,1
+FITEM,5,-9
+ASEL,S, , ,P51X
+LSLA,S
+LSEL,S,,,3,7,1
+NSLL,S,1
+CM,TARBEHIND,NODE
+ALLSEL,ALL
+LSEL,S,,,13
+LSEL,A,,,22,23,1
+NSLL,S,1
+CM,TARFRONT,NODE
+ALLSEL,ALL
+LSEL,S,,,8
+LSEL,A,,,24,26,1
+NSLL,S,0
+CM,TARFOOT,NODE
+ALLSEL,ALL
+LSEL,S,,,43,47,1
+NSLL,S,1
+CM,CONBEHIND,NODE
+ALLSEL,ALL
+LSEL,S,,,52,54,1
+NSLL,S,1
+CM,CONFRONT,NODE
+ALLSEL,ALL
+LSEL,S,,,48,51,1
+NSLL,S,0
+CM,CONFOOT,NODE
+ 
+!===================== material assignment (unchanged) ==================
+allsel,all
+nsel,s,loc,y,-0.25,0
+nsel,u,loc,x,0.01,0.51
+esln,
+mpchg,1,all
+allsel,all
+nsel,s,loc,y,-1.75,-0.75
+nsel,u,loc,x,0.01,0.51
+esln,
+mpchg,2,all
+allsel,all
+nsel,s,loc,y,-7.75,-2.25
+nsel,u,loc,x,0.01,0.51
+esln,
+mpchg,3,all
+allsel,all
+nsel,s,loc,y,-9.75,-8.25
+nsel,u,loc,x,0.01,0.51
+esln,
+mpchg,4,all
+allsel,all
+nsel,s,loc,y,-30,-10.25
+esln,
+mpchg,4,all
+allsel,all
+nsel,s,loc,y,0.01,10
+esln,
+mpchg,5,all
+allsel,all
+ASEL,s,,,1,9,1
+NSLA,S,
+esln,
+mpchg,7,all
+allsel,all
+FLST,5,2,2,ORDE,2
+FITEM,5,6430
+FITEM,5,6433
+ESEL,S, , ,P51X
+mpchg,2,all
+FLST,5,2,2,ORDE,2
+FITEM,5,4927
+FITEM,5,-4928
+ESEL,S, , ,P51X
+mpchg,3,all
+FLST,5,4,2,ORDE,2
+FITEM,5,4929
+FITEM,5,-4932
+ESEL,S, , ,P51X
+mpchg,4,all
+ 
+!>>> NEW: crushed-rock cooling layer in the embankment behind the abutment
+*IF,USE_CR,EQ,1,THEN
+  ALLSEL,ALL
+  ESEL,S,CENT,Y,CR_BOT,CR_TOP
+  ESEL,R,CENT,X,-20,-6.85
+  ESEL,R,MAT,,5
+  MPCHG,11,ALL
+  ALLSEL,ALL
+*ENDIF
+ 
+!===================== contact pairs (unchanged) ========================
+! behind abutment
+R,8,,,0.01,0.1,0,
+RMORE,,,1.0E20,0.0,1.0,0.7
+RMORE,85e3,105840,1.0,,1.0,0.5      ! COHE, TCC (thermal contact conductance)
+REAL,8
+TYPE,3
+ALLSEL,ALL
+FLST,5,9,5,ORDE,2
+FITEM,5,1
+FITEM,5,-9
+ASEL,S, , ,P51X
+LSLA,S
+LSEL,S,,,3,7,1
+NSLL,S,1
+ESURF
+TYPE,2
+REAL,8
+MP,MU,8,0.6
+MAT,8
+ALLSEL,ALL
+LSEL,S,,,43,47,1
+NSLL,S,1
+ESURF
+! in front of abutment
+R,9,,,0.01,0.1,0,
+RMORE,,,1.0E20,0.0,1.0,0.7
+RMORE,85e3,105840,1.0,,1.0,0.5
+REAL,9
+TYPE,3
+ALLSEL,ALL
+LSEL,S,,,13
+LSEL,A,,,22,23,1
+NSLL,S,1
+ESURF
+TYPE,2
+REAL,9
+MP,MU,9,0.5
+MAT,9
+ALLSEL,ALL
+LSEL,S,,,52,54,1
+NSLL,S,1
+ESURF
+! below footing
+R,10,,,0.01,0.1,0,
+RMORE,,,1.0E20,0.0,1.0,0.7
+RMORE,200e3,105840,1.0,,1.0,0.5
+REAL,10
+TYPE,3
+ALLSEL,ALL
+LSEL,S,,,8
+LSEL,A,,,24,26,1
+NSLL,S,1
+ESURF
+TYPE,2
+REAL,10
+MP,MU,10,0.3
+MAT,10
+ALLSEL,ALL
+LSEL,S,,,48,51,1
+NSLL,S,1
+ESURF
+! (Optional) 10 cm XPS on the abutment back face: change TCC of real set 8
+! to 1/(1/105840 + 0.10/108) = 1069. In the 2-D check this alone had only
+! a small effect, so it is not switched on here.
+ 
+!===================== surface temperature functions ===================
+! natural ground surface: -0.48 + 11 sin(2 pi t/8760 + pi) + 5.94e-6 t
+*DEL,dibiao
+*DEL,_FNCNAME
+*DEL,_FNCMTID
+*DEL,_FNCCSYS
+*SET,_FNCNAME,'dibiao'
+*SET,_FNCCSYS,0
+*DIM,%_FNCNAME%,TABLE,6,17,1,,,,%_FNCCSYS%
+*SET,%_FNCNAME%(0,0,1), 0.0, -999
+*SET,%_FNCNAME%(2,0,1), 0.0
+*SET,%_FNCNAME%(3,0,1), 0.0
+*SET,%_FNCNAME%(4,0,1), 0.0
+*SET,%_FNCNAME%(5,0,1), 0.0
+*SET,%_FNCNAME%(6,0,1), 0.0
+*SET,%_FNCNAME%(0,1,1), 1.0, -1, 0, 2, 0, 0, 0
+*SET,%_FNCNAME%(0,2,1), 0.0, -2, 0, 3.14159265358979310, 0, 0, -1
+*SET,%_FNCNAME%(0,3,1),   0, -3, 0, 1, -1, 3, -2
+*SET,%_FNCNAME%(0,4,1), 0.0, -1, 0, 1, -3, 3, 1
+*SET,%_FNCNAME%(0,5,1), 0.0, -2, 0, 8760, 0, 0, -1
+*SET,%_FNCNAME%(0,6,1), 0.0, -3, 0, 1, -1, 4, -2
+*SET,%_FNCNAME%(0,7,1), 0.0, -1, 0, 3.14159265358979310, 0, 0, -3
+*SET,%_FNCNAME%(0,8,1), 0.0, -2, 0, 1, -3, 1, -1
+*SET,%_FNCNAME%(0,9,1), 0.0, -1, 9, 1, -2, 0, 0
+*SET,%_FNCNAME%(0,10,1), 0.0, -2, 0, 11, 0, 0, -1
+*SET,%_FNCNAME%(0,11,1), 0.0, -3, 0, 1, -2, 3, -1
+*SET,%_FNCNAME%(0,12,1), 0.0, -1, 0, -0.48, 0, 0, -3
+*SET,%_FNCNAME%(0,13,1), 0.0, -2, 0, 1, -1, 1, -3
+*SET,%_FNCNAME%(0,14,1), 0.0, -1, 0, 0.00000594, 0, 0, 1
+*SET,%_FNCNAME%(0,15,1), 0.0, -3, 0, 1, -1, 3, 1
+*SET,%_FNCNAME%(0,16,1), 0.0, -1, 0, 1, -2, 1, -3
+*SET,%_FNCNAME%(0,17,1), 0.0, 99, 0, 1, -1, 0, 0
+ 
+! abutment concrete surface: 2 + 16 sin(2 pi t/8760 + pi) + 5.94e-6 t
+*DEL,_FNCNAME
+*DEL,_FNCMTID
+*DEL,_FNCCSYS
+*SET,_FNCNAME,'qiaotai'
+*SET,_FNCCSYS,0
+*DIM,%_FNCNAME%,TABLE,6,17,1,,,,%_FNCCSYS%
+*SET,%_FNCNAME%(0,0,1), 0.0, -999
+*SET,%_FNCNAME%(2,0,1), 0.0
+*SET,%_FNCNAME%(3,0,1), 0.0
+*SET,%_FNCNAME%(4,0,1), 0.0
+*SET,%_FNCNAME%(5,0,1), 0.0
+*SET,%_FNCNAME%(6,0,1), 0.0
+*SET,%_FNCNAME%(0,1,1), 1.0, -1, 0, 2, 0, 0, 0
+*SET,%_FNCNAME%(0,2,1), 0.0, -2, 0, 3.14159265358979310, 0, 0, -1
+*SET,%_FNCNAME%(0,3,1),   0, -3, 0, 1, -1, 3, -2
+*SET,%_FNCNAME%(0,4,1), 0.0, -1, 0, 1, -3, 3, 1
+*SET,%_FNCNAME%(0,5,1), 0.0, -2, 0, 8760, 0, 0, -1
+*SET,%_FNCNAME%(0,6,1), 0.0, -3, 0, 1, -1, 4, -2
+*SET,%_FNCNAME%(0,7,1), 0.0, -1, 0, 3.14159265358979310, 0, 0, -3
+*SET,%_FNCNAME%(0,8,1), 0.0, -2, 0, 1, -3, 1, -1
+*SET,%_FNCNAME%(0,9,1), 0.0, -1, 9, 1, -2, 0, 0
+*SET,%_FNCNAME%(0,10,1), 0.0, -2, 0, 16, 0, 0, -1
+*SET,%_FNCNAME%(0,11,1), 0.0, -3, 0, 1, -2, 3, -1
+*SET,%_FNCNAME%(0,12,1), 0.0, -1, 0, 2, 0, 0, -3
+*SET,%_FNCNAME%(0,13,1), 0.0, -2, 0, 1, -1, 1, -3
+*SET,%_FNCNAME%(0,14,1), 0.0, -1, 0, 0.00000594, 0, 0, 1
+*SET,%_FNCNAME%(0,15,1), 0.0, -3, 0, 1, -1, 3, 1
+*SET,%_FNCNAME%(0,16,1), 0.0, -1, 0, 1, -2, 1, -3
+*SET,%_FNCNAME%(0,17,1), 0.0, 99, 0, 1, -1, 0, 0
+ 
+!>>> CHANGED: embankment surface, mean & amplitude now parameters
+!    EMB_MEAN + EMB_AMP sin(2 pi t/8760 + pi) + 5.94e-6 t
+*DEL,_FNCNAME
+*DEL,_FNCMTID
+*DEL,_FNCCSYS
+*SET,_FNCNAME,'lumian'
+*SET,_FNCCSYS,0
+*DIM,%_FNCNAME%,TABLE,6,17,1,,,,%_FNCCSYS%
+*SET,%_FNCNAME%(0,0,1), 0.0, -999
+*SET,%_FNCNAME%(2,0,1), 0.0
+*SET,%_FNCNAME%(3,0,1), 0.0
+*SET,%_FNCNAME%(4,0,1), 0.0
+*SET,%_FNCNAME%(5,0,1), 0.0
+*SET,%_FNCNAME%(6,0,1), 0.0
+*SET,%_FNCNAME%(0,1,1), 1.0, -1, 0, 2, 0, 0, 0
+*SET,%_FNCNAME%(0,2,1), 0.0, -2, 0, 3.14159265358979310, 0, 0, -1
+*SET,%_FNCNAME%(0,3,1),   0, -3, 0, 1, -1, 3, -2
+*SET,%_FNCNAME%(0,4,1), 0.0, -1, 0, 1, -3, 3, 1
+*SET,%_FNCNAME%(0,5,1), 0.0, -2, 0, 8760, 0, 0, -1
+*SET,%_FNCNAME%(0,6,1), 0.0, -3, 0, 1, -1, 4, -2
+*SET,%_FNCNAME%(0,7,1), 0.0, -1, 0, 3.14159265358979310, 0, 0, -3
+*SET,%_FNCNAME%(0,8,1), 0.0, -2, 0, 1, -3, 1, -1
+*SET,%_FNCNAME%(0,9,1), 0.0, -1, 9, 1, -2, 0, 0
+*SET,%_FNCNAME%(0,10,1), 0.0, -2, 0, EMB_AMP, 0, 0, -1
+*SET,%_FNCNAME%(0,11,1), 0.0, -3, 0, 1, -2, 3, -1
+*SET,%_FNCNAME%(0,12,1), 0.0, -1, 0, EMB_MEAN, 0, 0, -3
+*SET,%_FNCNAME%(0,13,1), 0.0, -2, 0, 1, -1, 1, -3
+*SET,%_FNCNAME%(0,14,1), 0.0, -1, 0, 0.00000594, 0, 0, 1
+*SET,%_FNCNAME%(0,15,1), 0.0, -3, 0, 1, -1, 3, 1
+*SET,%_FNCNAME%(0,16,1), 0.0, -1, 0, 1, -2, 1, -3
+*SET,%_FNCNAME%(0,17,1), 0.0, 99, 0, 1, -1, 0, 0
+ 
+!===================== boundary conditions ==============================
+
+!    surface function. It is natural ground, so it gets DIBIAO.
+allsel,all
+lsel,s,,,27,28,1
+nsll,s,1
+D,ALL,TEMP,%dibiao%
+ 
+! exposed abutment concrete faces (lines 1,2,11,12) 
+allsel,all
+lsel,s,,,1,2,1
+lsel,a,,,11,12,1
+nsll,s,1
+D,ALL,TEMP,%qiaotai%
+ 
+!embankment top, line 55 + line 56 (backfill wedge top)
+allsel,all
+lsel,s,,,55,56,1
+nsll,s,1
+D,ALL,TEMP,%lumian%
+ 
+! geothermal flux at the bottom
+!>>> SETTLEMENT: the model bottom is y = -20 (K24..K30). The original
+!    "nsel,s,loc,y,-28" selected no nodes, so no flux was applied.
+allsel,all
+nsel,s,loc,y,-20
+SF,ALL,HFLUX,QGEO
+ 
+!===================== initial temperature ==============================
+!>>> CHANGED: one continuous profile T(y) interpolated at every node
+!    (same values as the original step list, but with no gaps)
+*DEL,ICT
+*DIM,ICT,TABLE,27,1
+*TAXIS,ICT(1),1,-30,-16,-15,-14,-13,-12,-11,-10,-9,-8
+*TAXIS,ICT(11),1,-7,-6,-5,-4,-3,-2,-1.75,-1,-0.75,-0.5
+*TAXIS,ICT(21),1,-0.25,0,0.25,4,4.25,7,10
+ICT(1,1)=-0.25,-0.25,-0.27,-0.29,-0.31,-0.33,-0.36,-0.41,-0.45,-0.50
+ICT(11,1)=-0.55,-0.60,-0.65,-0.69,-0.80,-0.80,0.20,0.20,0.25,0.25
+ICT(21,1)=1.0,1.0,2.0,2.0,3.0,3.0,3.0
+allsel,all
+*GET,NMAX,NODE,0,NUM,MAX
+*DO,I,1,NMAX
+  *IF,NSEL(I),EQ,1,THEN
+    YY=NY(I)
+    TT=ICT(YY)
+    IC,I,TEMP,TT
+  *ENDIF
+*ENDDO
+allsel,all
+finish
+ 
+!===================== solution =========================================
+/config,nres,200000
+/solu
+antype,trans
+AUTOTS,1
+KBC,0
+TSRES,ERASE
+NEQIT,100
+TIMINT,1
+TINTP,0.009, , ,1,0.5,-1
+CNVTOL,TEMP, ,,2,
+LNSRCH,1
+PRED,ON,,ON
+outres,all,5            ! every 5th substep + last substep of every month
+                        ! (step 2 reads the month-end sets with LDREAD)
+ 
+
+*SET,NMON,NYEAR*12
+*DO,IM,1,NMON
+  TEND = IM*730
+  TMID = TEND-365
+  TSURF = EMB_MEAN+EMB_AMP*SIN(2*PI*TMID/8760+PI)+0.00000594*TMID
+  *IF,USE_CR,EQ,1,THEN
+    *IF,TSURF,LT,0,THEN
+      MP,KXX,11,CR_KW
+    *ELSE
+      MP,KXX,11,CR_KS
+    *ENDIF
+  *ENDIF
+  TIME,TEND
+  DELTIM,1,0.01,24
+  allsel,all
+  SOLVE
+*ENDDO
+save
+finish
