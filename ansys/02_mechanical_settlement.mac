@@ -23,9 +23,10 @@
 !   LS1  t=0.5  ground self weight only (geostatic stress). Embankment,
 !               abutment and crushed rock are weightless. REFERENCE STATE:
 !               settlement is measured from here, as in Fig. 14.
-!   LS2  t=1    embankment + abutment weight, pavement + traffic load,
-!               initial temperature field (end of construction)
-!   LS3+ t=730k monthly temperature fields from THERMAL.rth
+!   LS2  t=0.75 embankment + abutment weight, pavement + traffic load
+!               (temperatures unchanged from LS1)
+!   LS3  t=1    initial temperature field ICT (end of construction)
+!   LS4+ t=730k monthly temperature fields from THERMAL.rth
 !=======================================================================
 /CLEAR
 /FILNAME,MECH,1
@@ -73,6 +74,16 @@ Q_VEH     = 0        ! vehicle equivalent uniform load (Pa)  (case 3)
 Q_TRAF    = Q_PAVE+Q_VEH
 LOAD_CAP  = 1        ! 1 = also on the road over the abutment cap (line 2)
 CR_E      = 100e6    ! crushed-rock layer (mat 11) modulus, if USE_CR = 1
+!---- contact / support of the abutment (fix for the rigid-body error)
+ABUT_BOND = 1        ! 1 = footing and front pairs bonded (foundation cast
+                     !     in the ground); behind pair stays standard, so
+                     !     the embankment can still separate (paper)
+                     ! 0 = all pairs standard frictional (can float!)
+FKN_M     = 1.0      ! contact normal stiffness factor in the structural run
+                     ! (the thermal database has 0.01 = 100x too soft)
+SEAT_FIX  = 0        ! 1 = UX = 0 at the bridge seat (superstructure restrains
+                     !     the abutment horizontally, fixed bearing)
+STAB      = 0        ! 1 = energy stabilisation if a step will not converge
 
 !------------------ Table 3 constants, one column per material ----------
 ! row 1 a1  2 b1 (E, MPa)   3 a2  4 b2 (nu)   5 a3  6 b3 (c, MPa)
@@ -112,9 +123,33 @@ KEYOPT,1,3,2               ! PLANE STRAIN (ETCHG leaves plane stress)
 KEYOPT,2,1,0               ! CONTA172: UX, UY instead of TEMP
 KEYOPT,2,9,1               ! ignore initial gap / penetration
 KEYOPT,2,10,2              ! update contact stiffness every iteration
-! KEYOPT(12) = 0 (standard): the embankment may separate from the
-! abutment, as the paper assumes. Friction MU (mat 8/9/10) and the
-! cohesion in real sets 8/9/10 come over from the thermal database.
+KEYOPT,2,12,0              ! standard: embankment may separate (paper)
+! Friction MU (mat 8/9/10) and cohesion (real sets 8/9/10) come over from
+! the thermal database. The thermal run used FKN = 0.01 (only TCC matters
+! there); structurally that lets the abutment sink ~0.2 m into the soil
+! by penetration alone, so the normal stiffness factor is reset here.
+RMODIF,8,3,FKN_M
+RMODIF,9,3,FKN_M
+RMODIF,10,3,FKN_M
+! The concrete (abutment + footing) has its own nodes and is held ONLY by
+! contact. Coincident surfaces start "just touching" = open for standard
+! contact, so the weightless concrete floats in LS1 (pivot warnings) and
+! falls when its weight is switched on (UY > 1e6, rigid-body error).
+! Fix: bonded contact for the footing (real 10) and front (real 9) pairs,
+! on their own element type because KEYOPTs belong to the element type.
+*IF,ABUT_BOND,EQ,1,THEN
+  ET,4,CONTA172
+  KEYOPT,4,1,0
+  KEYOPT,4,2,0             ! augmented Lagrange (penalty) - no MPC
+                           ! over-constraint at shared corner nodes
+  KEYOPT,4,9,1
+  KEYOPT,4,10,2
+  KEYOPT,4,12,5            ! bonded (always)
+  ESEL,S,TYPE,,2
+  ESEL,R,REAL,,9,10
+  EMODIF,ALL,TYPE,4
+  ALLSEL,ALL
+*ENDIF
 
 MPDELE,EX,1,11
 MPDELE,PRXY,1,11
@@ -250,6 +285,14 @@ D,ALL,UX,0
 NSEL,S,LOC,Y,YB
 D,ALL,UY,0
 ALLSEL,ALL
+*IF,SEAT_FIX,EQ,1,THEN     ! bridge seat, y = 6, x = -1.5 ... 0
+  ESEL,S,MAT,,7
+  NSLE,S
+  NSEL,R,LOC,Y,6
+  NSEL,R,LOC,X,-1.5,0
+  D,ALL,UX,0
+  ALLSEL,ALL
+*ENDIF
 ACEL,0,9.81,0              ! gravity (acts in -y)
 TREF,0
 FINISH
@@ -262,9 +305,15 @@ NROPT,UNSYM                ! friction 0.3-0.6
 AUTOTS,ON
 LNSRCH,ON
 NEQIT,50
+PRED,ON
 KBC,0
 OUTRES,ERASE
 OUTRES,ALL,LAST
+*IF,STAB,EQ,1,THEN
+  STABILIZE,CONSTANT,ENERGY,1e-4
+*ENDIF
+CNCHECK,SUMMARY            ! prints the initial status of every contact pair
+                           ! (bonded pairs must be CLOSED)
 
 ALLSEL,ALL
 *GET,NMAX,NODE,0,NUM,MAX
@@ -299,8 +348,9 @@ TIME,0.5
 NSUBST,5,100,2
 SOLVE
 
-!---- LS2: end of construction - embankment + abutment weight, traffic,
-!     initial temperature profile ICT (the thermal IC)
+!---- LS2: construction loads - embankment + abutment weight, pavement
+!     and traffic. Temperatures stay as in LS1 (loads and thaw strain are
+!     applied in separate steps, which converges much more easily).
 MP,DENS,5,2060
 MP,DENS,7,2500
 MP,DENS,11,1600
@@ -311,6 +361,13 @@ LSEL,S,,,55,56             ! embankment top
 NSLL,S,1
 SF,ALL,PRES,Q_TRAF
 ALLSEL,ALL
+TIME,0.75
+NSUBST,20,400,10
+SOLVE
+
+!---- LS3: end of construction - initial temperature profile ICT
+!     (the thermal IC): thawed active layer and fill take their thaw
+!     strain and thawed properties here
 *DO,I,1,NMAX
   *IF,NSEL(I),EQ,1,THEN
     YY = NY(I)
@@ -323,7 +380,7 @@ TIME,1
 NSUBST,20,400,10
 SOLVE
 
-!---- LS3...: monthly temperature fields from the thermal run
+!---- LS4...: monthly temperature fields from the thermal run
 *IF,USE_CREEP,EQ,1,THEN
   RATE,ON
   CUTCONTROL,CRPLIMIT,1.0,1

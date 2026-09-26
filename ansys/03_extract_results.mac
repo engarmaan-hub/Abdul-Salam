@@ -178,7 +178,7 @@ CM,SOILNODE,NODE
 *ENDDO
 ALLSEL,ALL
 
-! reference displacements: LS1 (geostatic) and LS2 (end of construction)
+! reference displacements: LS1 (geostatic) and LS3 (end of construction)
 *DEL,UT1
 *DEL,UB1
 *DEL,UT2
@@ -192,7 +192,7 @@ SET,1,LAST
   UT1(K) = UY(NT7(K))
   UB1(K) = UY(NB0(K))
 *ENDDO
-SET,2,LAST
+SET,3,LAST
 *DO,K,1,ND
   UT2(K) = UY(NT7(K))
   UB2(K) = UY(NB0(K))
@@ -243,7 +243,7 @@ IR = 0
 *CFCLOS
 
 !---- B2: time history at d = 0, 5, 10, 20 m, every load step
-NLS = 2+NMON/MSTEP
+NLS = 3+NMON/MSTEP
 *DEL,HIS
 *DIM,HIS,ARRAY,NLS,9
 *DO,ILS,1,NLS

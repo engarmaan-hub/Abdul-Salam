@@ -88,14 +88,17 @@ Warm permafrost (−0.3 to −1 °C) is soil held together by ice. Settlement un
 
 The concrete (areas 1–9) and the soil (areas 10–25) have **separate nodes** at the same coordinates. They are connected by three contact pairs (CONTA172 on soil, TARGE169 on concrete):
 
-| Pair | Concrete lines (target) | Soil lines (contact) | Friction μ | Cohesion |
-|---|---|---|---|---|
-| behind the abutment (real set 8) | 3–7 | 43–47 | 0.6 | 85 kPa |
-| in front (real set 9) | 13, 22, 23 | 52–54 | 0.5 | 85 kPa |
-| under the footing (real set 10) | 8, 24–26 | 48–51 | 0.3 | 200 kPa |
+| Pair | Concrete lines (target) | Soil lines (contact) | Friction μ | Cohesion | Mechanical behaviour (`ABUT_BOND = 1`) |
+|---|---|---|---|---|---|
+| behind the abutment (real set 8) | 3–7 | 43–47 | 0.6 | 85 kPa | standard: can slide and open a gap (paper) |
+| in front (real set 9) | 13, 22, 23 | 52–54 | 0.5 | 85 kPa | **bonded** (element type 4) |
+| under the footing (real set 10) | 8, 24–26 | 48–51 | 0.3 | 200 kPa | **bonded** (element type 4) |
 
 - **In the thermal run**, contact passes heat through the thermal contact conductance TCC = 105 840 J/(m²·h·°C) = 29.4 W/(m²·K).
-- **In the mechanical run**, contact allows the embankment to slide on and separate from the abutment, as the paper assumes ("gaps between the embankment and the abutment are allowed").
+- **In the mechanical run**:
+  - the behind pair lets the embankment slide on and separate from the abutment, as the paper assumes ("gaps between the embankment and the abutment are allowed");
+  - the footing and front pairs are **bonded**, because the concrete has no other support (Section 12.1);
+  - the contact stiffness factor is reset from the thermal 0.01 to `FKN_M = 1`.
 
 ### 3.4 Mesh
 
@@ -281,15 +284,18 @@ Section 9.5 shows what each combination gives.
 | LS | Time (h) | Applied | Purpose |
 |---|---|---|---|
 | 1 | 0.5 | gravity on the **natural ground only** (fill, concrete and crushed rock made weightless with `MP,DENS` ≈ 0); soil at a frozen reference temperature | **geostatic stress**, the reference for settlement |
-| 2 | 1 | full densities, pavement + traffic surcharge, initial temperature profile ICT | end of construction |
-| 3 … 182 | 730·k | monthly temperature field from THERMAL.rth; creep on (`RATE,ON`) | 15 years of service |
+| 2 | 0.75 | full densities, pavement + traffic surcharge (temperatures unchanged) | construction loads |
+| 3 | 1 | initial temperature profile ICT (thawed active layer and fill take thaw strain and thawed properties) | end of construction |
+| 4 … 183 | 730·k | monthly temperature field from THERMAL.rth; creep on (`RATE,ON`) | 15 years of service |
+
+Loads (LS2) and the first temperature field (LS3) are applied in **separate steps**. Each is a large change on its own, and splitting them makes both converge more easily.
 
 **Why measure from LS1.** The paper states that "the initial ground stress includes self-weight". Real ground has already consolidated under its own weight, so that compression is not settlement. Measuring from LS1 therefore excludes it and includes:
 1. the compression caused by the embankment and traffic;
 2. thaw strain;
 3. creep and plastic strain.
 
-`03` also writes a "freeze-thaw only" version measured from LS2 (`tot_ft`, `fnd_ft`).
+`03` also writes a "freeze-thaw only" version measured from LS3, the end of construction (`tot_ft`, `fnd_ft`).
 
 ---
 
@@ -346,7 +352,7 @@ The calculated values come from `tools/traffic_load.py`.
 | `yr, mon, d` | year, month (4 or 10), distance (m) |
 | `tot, fnd, emb` | total, foundation, embankment settlement (cm), from LS1 |
 | `fnd_pct, emb_pct` | shares of the total (%), as in Fig. 14b |
-| `tot_ft, fnd_ft` | the same, from LS2 (freeze–thaw part only) |
+| `tot_ft, fnd_ft` | the same, from LS3 (freeze–thaw part only) |
 
 - `settlement_history.csv`: every load step, total and foundation settlement at d = 0, 5, 10, 20 m.
 - PNG contours of vertical displacement relative to LS1 (`LCDEF`/`LCOPER,SUB`).
@@ -449,7 +455,11 @@ What this shows:
 | `*GET,…,NODE,n,BF,TEMP` (only with `IRREV = 1`) | use `*GET,…,NODE,n,NTEMP` |
 | `NSEL,R,TEMP` in POST1 (thaw depth) | use `*VGET` of TEMP and loop |
 
-**Look at the log for:** "plane strain" on element type 1, the contact status of pairs 8–10 after LS2 (closed), and convergence in the months when the thaw front is deepest (August to October).
+**Look at the log for:**
+- the `CNCHECK,SUMMARY` table before LS1: pairs 9 and 10 (bonded) must show contact **closed**;
+- convergence in the months when the thaw front is deepest (August to October).
+
+The first real run (ANSYS 18.1) accepted EDP, creep, THSY/REFT and `MP,DENS` in `/SOLU` (the last only with a warning). It stopped on rigid-body motion of the abutment, which is fixed as described in Section 12.1.
 
 ---
 
@@ -499,6 +509,10 @@ What this shows:
 | `M_E`, `C_MIN`, `PHI_MX` | 1, 5 kPa, 50° | Eq. 6 exponent and strength safeguards |
 | `LOAD_CASE`, `Q_PAVE`, `Q_VEH`, `LOAD_CAP` | 1, –, –, 1 | surcharge (Section 7) |
 | `CR_E` | 100 MPa | crushed-rock modulus |
+| `ABUT_BOND` | 1 | footing and front contact pairs bonded (Section 12.1) |
+| `FKN_M` | 1.0 | contact normal stiffness factor in the structural run |
+| `SEAT_FIX` | 0 | UX = 0 at the bridge seat (superstructure restraint) |
+| `STAB` | 0 | energy stabilisation for hard-to-converge steps |
 
 **Extraction macro (03)**
 
@@ -515,7 +529,7 @@ What this shows:
 
 1. Put the three macros in one empty folder. In MAPDL: `/INPUT,01_thermal_transient,mac`. The run is 180 monthly load steps, so it is the long one.
 2. Check `POST0*.png` and `thaw_depth.csv` from step 3 part A. (You can run `03` part A alone by stopping it after `FINISH` of part A.)
-3. `/INPUT,02_mechanical_settlement,mac` (182 load steps), then `/INPUT,03_extract_results,mac`.
+3. `/INPUT,02_mechanical_settlement,mac` (183 load steps), then `/INPUT,03_extract_results,mac`.
 4. Run `python3 tools/compare_fig14.py .`, then `python3 tools/column_1d.py` for the far-field reference.
 
 All the Python checks together (no ANSYS needed):
@@ -533,9 +547,36 @@ python3 tools/compare_fig14.py --demo
 | Symptom | Fix |
 |---|---|
 | A month fails to converge | raise the `NSUBST` maximum (e.g. 400), or `MSTEP = 2` |
-| Abutment drifts or rotates freely (it is held only by contact) | KEYOPT(12) = 5 (always bonded) on the footing pair, real set 10 |
-| Large settlement already in LS2 | expected in paper mode: the thawed active layer and fill take their thaw strain at LS2 |
+| Rigid-body error / huge UX, UY at the abutment | see Section 12.1; keep `ABUT_BOND = 1`; optionally `SEAT_FIX = 1` |
+| A step yields and will not converge (large plastic zone) | `STAB = 1` (energy stabilisation, 1e-4), check that the stabilisation energy stays small in the output |
+| Large settlement already in LS3 | expected in paper mode: the thawed active layer and fill take their thaw strain at LS3 |
+| "Sparse solver … out-of-core" warning | only speed. Give MAPDL more memory at launch (e.g. `-m 4000 -db 1024`, or custom memory in the Product Launcher) |
+| After an error, "X is not a recognized BEGIN command" | not a separate problem: after a failed SOLVE batch ANSYS leaves `/SOLU` and ignores the remaining solution commands. Fix the first error |
 | Settlement jumps every summer and recovers | that is `IRREV = 0`; use `IRREV = 1` for irreversible thaw |
+
+### 12.1 The first run (ANSYS 18.1): what the log meant and what was changed
+
+| Log message | Meaning | Change |
+|---|---|---|
+| CONTA172 / TARGE169 "no companion element type for ETCHG,TTS" | expected: ETCHG only converts PLANE55 → PLANE182 | none needed; the macro sets the contact KEYOPTs itself |
+| "Changing material properties (MP) between load steps is non-standard" | the staged self-weight (`MP,DENS` in LS1 → LS2) was accepted | none |
+| Sparse solver "out-of-core" | not enough memory for in-core; slower only | give more memory at launch |
+| "N small equation solver pivot terms … had to be constrained", "extremely large pivot ratio" | a part of the model had no stiffness: the **concrete**, held only by contact | see below |
+| "UY/UX … greater than 1 000 000 … rigid body motion", "held together only by contact" | in the construction step the concrete got its weight and fell through the soil | see below |
+| RATE, CUTCONTR, LDREAD, TIME, NSUBST, SOLVE "not a recognized BEGIN command" | consequence of the failed SOLVE (ANSYS left `/SOLU`) | disappears with the fix |
+
+**Why the concrete had no stiffness:**
+1. Concrete and soil have separate nodes. Their surfaces coincide exactly, and standard contact treats "just touching" as **open**, so there is no stiffness.
+2. The contact real constants come from the thermal database with **FKN = 0.01**, 100× softer than the default. Even when closed, the 14 m high abutment would sink about 0.2 m into the soil by penetration alone.
+
+**Changes in `02`:**
+- `RMODIF` sets FKN = `FKN_M` = 1 on real sets 8–10.
+- The footing (real 10) and front (real 9) pairs move to a new element type 4 (CONTA172, `KEYOPT(12)=5`, **bonded always**, augmented Lagrange). The foundation is cast in the ground, so it cannot float or slide away.
+- The **behind pair stays standard**, so the embankment can still separate from the backwall, as in the paper.
+- `CNCHECK,SUMMARY` prints the contact status before the first solve.
+- Loads (LS2) and the first temperature field (LS3) are applied in separate steps; `PRED,ON` is added.
+- Optional: `SEAT_FIX = 1` (horizontal restraint from the bridge superstructure at the seat) and `STAB = 1` (energy stabilisation).
+- `03` now takes the end of construction from LS3 and counts 3 + months load steps.
 
 ---
 

@@ -39,10 +39,9 @@ python3 tools/compare_fig14.py --demo  # test the comparison plot
 | 02 | `LOAD_CASE` | 1 | 1 = paper 60.1 kPa; 2 = pavement 16.4 + traffic 17.9 kPa; 3 = user |
 | 02 | `USE_CREEP`, `M_E` | 1, 1.0 | creep on; exponent m in Eq. 6 (not given in the paper) |
 | 02 | `MSTEP` | 1 | months per structural step |
+| 02 | `ABUT_BOND`, `FKN_M` | 1, 1.0 | footing/front contact bonded; contact stiffness (fix for the rigid-body error, note §12.1) |
+| 02 | `SEAT_FIX`, `STAB` | 0, 0 | optional seat restraint; energy stabilisation |
 
 ## Status
 
-The macros have **not been run in ANSYS** (no licence here). Everything else was checked in Python (see above and note §9). On the first run, watch the commands listed in note §9.7:
-- `TB,EDP` together with `TB,CREEP`;
-- `MP,THSY` with `REFT`;
-- `MP,DENS` inside `/SOLU`.
+The first ANSYS 18.1 run of `02` stopped with rigid-body motion of the abutment. The concrete is held only by contact, which started open and used the thermal run's FKN = 0.01. This is now fixed (bonded footing/front pairs, FKN = 1, loads and temperatures in separate steps); see note §12.1. The fixed version has not yet been re-run in ANSYS here (no licence); all Python checks pass.
