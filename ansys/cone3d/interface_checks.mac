@@ -1,0 +1,59 @@
+!=====================================================================
+! POST1 checks for the abutment / cone / soil interfaces.
+! Run after the last SOLVE (same session, or RESUME the .db / .rth).
+!=====================================================================
+/POST1
+set,last
+allsel,all
+
+! 1) contact status and heat flux, pair by pair
+!    STAT: 3 = closed/sticking, 2 = sliding, 1 = open near, 0 = open far
+!    anything but 3 on a conforming interface is a problem
+esel,s,type,,3
+esel,r,real,,8
+plesol,cont,stat        ! soil / cone
+plesol,cont,flux        ! heat flux through that pair
+esel,s,type,,3
+esel,r,real,,9
+plesol,cont,stat        ! cone / abutment
+plesol,cont,flux
+allsel,all
+
+! 2) heat-flux vectors across the whole model (zoom to the cone toe,
+!    cone base and abutment foot; the arrows must be continuous)
+esel,s,type,,1
+plvect,tf,,,,vect,elem,on
+allsel,all
+
+! 3) temperature along a line that crosses the cone base into the soil.
+!    EDIT XP, ZP to a point under the cone (x, z) -- Y is the vertical.
+XP = -4
+ZP = 6
+path,cone_soil,2,30,100
+ppath,1,,XP, 3,ZP       ! 3 m above the ground, inside the cone
+ppath,2,,XP,-3,ZP       ! 3 m below the ground, inside the soil
+pdef,temp,temp
+plpath,temp             ! kink at y=0 is fine, a JUMP is not
+
+! 4) same idea across the abutment front face (horizontal line)
+XA1 = -3
+XA2 =  2
+YA  =  3
+ZA  =  6
+path,cone_abut,2,30,100
+ppath,1,,XA1,YA,ZA
+ppath,2,,XA2,YA,ZA
+pdef,temp,temp
+plpath,temp
+allsel,all
+
+!---------------------------------------------------------------------
+! NOTE ON RUN TIME
+! The posted run stops at TIME = 2000 h (83 days).  Over that time the
+! cold front only reaches ~1.5-2 m, so very little heat can cross the
+! cone/soil interface.  To judge it, run several years, e.g. in /SOLU:
+!   TIME,8760*3   $ outres,basic,10 $ solve    ! end of year 3
+!   TIME,8760*3.5 $ outres,basic,10 $ solve    ! warm half-year
+! and look at SET at the coldest (t = 8760*(n+0.25)) and warmest
+! (t = 8760*(n+0.75)) times.
+!---------------------------------------------------------------------

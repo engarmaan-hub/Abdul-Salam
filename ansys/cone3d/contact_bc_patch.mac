@@ -1,0 +1,186 @@
+!=====================================================================
+! DROP-IN PATCH for the 3-D abutment / protection-cone / soil thermal
+! script.  NOT RUN: no ANSYS licence in the review sandbox.
+!
+! PART A  replaces the two ET lines for the contact types
+!         ("ET,3,173 / KEYOPT,3,1,2 / ET,4,170").
+! PART B  replaces everything from "!CONTACT PAIRS - soil/cone"
+!         down to (not including) "!!! Sunny Slope".
+!         It contains: contact pairs, ground BC, abutment BC, cone BC.
+! Everything else in the original script stays as it is.
+!=====================================================================
+
+!---------------------------------------------------------------------
+! PART A - element types
+!---------------------------------------------------------------------
+ET,3,173
+KEYOPT,3,1,2          ! TEMP only (unchanged)
+KEYOPT,3,12,5         ! NEW: bonded (always) -> status never flips to open,
+                      !      heat always crosses the pair through TCC
+ET,4,170
+
+!---------------------------------------------------------------------
+! PART B - contact pairs + boundary conditions
+!---------------------------------------------------------------------
+TCC_SOIL = 1.0E7      ! cone fill on natural ground: perfect contact
+                      ! [J/(h*m2*C)]  (= 2.8 kW/m2K, ~0.6 mm of soil)
+TCC_ABUT = 105840     ! cone fill on concrete: your value, 29.4 W/m2K
+KEEP_NODE_PATCH = 0   ! 1 = re-apply your hard-coded node lists (see note)
+
+!-------- pair 1: soil (target) <- cone base (contact) ---------------
+allsel,all
+R,8,,,0.01,0.1,0,                   ! R3=FKN, R4=FTOLN, R5=ICONT
+RMORE,,,1.0E20,0.0,1.0,0.7          ! R9=TAUMAX, R10=CNOF, R11=FKOP, R12=FKT
+RMORE,85e3,TCC_SOIL,1.0,,1.0,0.5    ! R13=COHE, R14=TCC, R15=FHTG, R17=RDVF, R18=FWGT
+MP,MU,8,0.6
+
+real,8
+type,4
+allsel,all
+asel,s,,,2                          ! soil areas (as in your script)
+asel,a,,,17,18,1
+nsla,s,1                            ! NKEY=1: also nodes ON the area edges
+esln,s,0                            ! elements touching those nodes ...
+esel,r,type,,1                      ! ... SOLID70 only (hide MESH200)
+esurf
+
+type,3
+real,8
+mat,8
+allsel,all
+asel,s,,,6,10,4                     ! cone areas (as in your script)
+asel,a,,,13
+nsla,s,1
+esln,s,0
+esel,r,type,,1
+esurf
+allsel,all
+
+!-------- pair 2: abutment (target) <- cone face (contact) -----------
+allsel,all
+R,9,,,0.01,0.1,0,
+RMORE,,,1.0E20,0.0,1.0,0.7
+RMORE,85e3,TCC_ABUT,1.0,,1.0,0.5
+MP,MU,9,0.5
+
+real,9
+type,4
+allsel,all
+asel,s,,,57,58,1                    ! abutment areas
+nsla,s,1
+esln,s,0
+esel,r,type,,1
+esurf
+
+type,3
+real,9
+mat,9
+allsel,all
+asel,s,,,5,12,7                     ! cone areas
+nsla,s,1
+esln,s,0
+esel,r,type,,1
+esurf
+allsel,all
+
+! how many contact / target elements were made (should be non-zero and
+! of similar size for each pair)
+esel,s,type,,3
+esel,r,real,,8
+*get,nC8,elem,0,count
+esel,s,type,,4
+esel,r,real,,8
+*get,nT8,elem,0,count
+esel,s,type,,3
+esel,r,real,,9
+*get,nC9,elem,0,count
+esel,s,type,,4
+esel,r,real,,9
+*get,nT9,elem,0,count
+allsel,all
+/com, soil/cone    : contact=%nC8%  target=%nT8%
+/com, cone/abutment: contact=%nC9%  target=%nT9%
+
+!-------- BC: natural ground ---------------------------------------
+allsel,all
+asel,s,,,72
+asel,a,,,3
+asel,a,,,16,19,3
+asel,a,,,20,21,1
+nsla,s,1
+d,all,temp,%dibiao%
+
+allsel,all
+asel,s,,,2
+nsla,s,1
+nsel,r,loc,x,7.05,17.8
+d,all,temp,%dibiao%
+allsel,all
+
+*if,KEEP_NODE_PATCH,eq,1,then
+  NSEL,S,NODE,,10584
+  NSEL,A,NODE,,10535,10538,1
+  NSEL,A,NODE,,10534
+  NSEL,A,NODE,,10511,10513,1
+  NSEL,A,NODE,,10517,10521,1
+  NSEL,A,NODE,,10545,10546,1
+  NSEL,A,NODE,,10543,10544,1
+  NSEL,A,NODE,,10450
+  NSEL,A,NODE,,10497
+  NSEL,A,NODE,,10503
+  NSEL,A,NODE,,10541
+  NSEL,A,NODE,,10545,10546,1
+  NSEL,A,NODE,,10540,10542,2
+  d,all,temp,%dibiao%
+  allsel,all
+*endif
+
+!-------- BC: exposed abutment face --------------------------------
+allsel,all
+asel,s,,,60,62,1
+nsla,s,1                            ! was NSLA,S (edge nodes missing)
+d,all,temp,%qiaotai%
+allsel,all
+
+*if,KEEP_NODE_PATCH,eq,1,then
+  NSEL,S,NODE,,60801,60804,1
+  NSEL,A,NODE,,61476,61479,1
+  NSEL,A,NODE,,61461,61464,1
+  NSEL,A,NODE,,61446,61449,1
+  NSEL,A,NODE,,61431,61434,1
+  NSEL,A,NODE,,61416,61419,1
+  NSEL,A,NODE,,61401,61404,1
+  NSEL,A,NODE,,61386,61389,1
+  NSEL,A,NODE,,61371,61374,1
+  NSEL,A,NODE,,61356,61359,1
+  NSEL,A,NODE,,61341,61344,1
+  NSEL,A,NODE,,61326,61329,1
+  NSEL,A,NODE,,61311,61314,1
+  NSEL,A,NODE,,61296,61299,1
+  NSEL,A,NODE,,61281,61284,1
+  NSEL,A,NODE,,61266,61269,1
+  NSEL,A,NODE,,61539
+  NSEL,A,NODE,,60505,60519,1
+  NSEL,A,NODE,,60489
+  NSEL,A,NODE,,61554
+  NSEL,A,NODE,,61569
+  NSEL,A,NODE,,61584
+  NSEL,A,NODE,,61599
+  NSEL,A,NODE,,61613,61614,1
+  NSEL,A,NODE,,61628,61629,1
+  NSEL,A,NODE,,61643,61644,1
+  NSEL,A,NODE,,61673,61674,1
+  NSEL,A,NODE,,61658,61659,1
+  NSEL,A,NODE,,61687,61689,1
+  NSEL,A,NODE,,61702,61704,1
+  d,all,temp,%qiaotai%
+  allsel,all
+*endif
+
+!-------- BC: cone slope -------------------------------------------
+allsel,all
+asel,s,,,14
+asel,a,,,4,9,5
+nsla,s,1                            ! was NSLA,S (edge nodes missing)
+d,all,temp,%zhuipo%
+allsel,all
